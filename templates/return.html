@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dokumentasi Penyelesaian Labkom</title>
+<style>body{font:15px/1.5 Arial,sans-serif;background:#f3f6fb;color:#17233b;margin:0;padding:20px}.card{max-width:700px;margin:auto;background:white;border:1px solid #dce4ef;border-radius:14px;padding:22px}h1{font-size:22px;margin-top:0}.hint{color:#607089;font-size:13px}.btn{padding:11px 15px;background:#2359a8;color:white;border:0;border-radius:8px;font-weight:bold;cursor:pointer}.btn2{padding:9px 12px;background:white;border:1px solid #cbd5e1;border-radius:8px;cursor:pointer}video,img{display:block;width:100%;max-width:520px;background:#111;border-radius:10px;margin:10px 0}input[type=file]{margin:8px 0;max-width:100%}.error{background:#fff0ef;padding:10px;border-radius:8px;margin-bottom:12px}</style><script src="{{ url_for('static', filename='photo-compress.js') }}"></script></head><body><main class="card">
+<h1>Dokumentasi Penyelesaian Peminjaman</h1>
+{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="error">{{message}}</div>{% endfor %}{% endwith %}
+<p><b>Nama:</b> {{loan.nama}}<br><b>Jenis:</b> {{loan.peminjam_type}}<br><b>Lab:</b> {{loan.lab}}<br><b>Tanggal:</b> {{loan.tanggal}}<br><b>Waktu mulai:</b> {{loan.waktu_mulai}}<br><b>Estimasi selesai:</b> {{loan.waktu_selesai}}</p>
+{% if loan.peminjam_type == 'Guru' %}
+<p>Unggah foto kondisi akhir dari HP. Foto kondisi awal sudah menjadi bagian dari transaksi peminjaman.</p>
+<form method="post" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label><b>Foto kondisi akhir Labkom (wajib)</b></label><br><input type="file" name="photo_after" accept="image/*" capture="environment" required onchange="compressImage(this)"><p class="hint">Foto harus menunjukkan kondisi komputer/peralatan setelah digunakan. Format: JPG, PNG, atau WEBP.</p><button class="btn" type="submit">Simpan Foto & Selesaikan</button></form>
+{% else %}
+<p>Petugas mengambil foto kondisi akhir menggunakan webcam komputer Labkom.</p>
+<button class="btn" type="button" onclick="startCamera()">Aktifkan Webcam</button> <button class="btn2" type="button" onclick="takePhoto()">Ambil Foto</button> <button class="btn2" type="button" onclick="stopCamera()">Matikan Webcam</button>
+<video id="video" autoplay playsinline></video><canvas id="canvas" hidden></canvas><img id="preview" alt="Pratinjau foto" hidden><p class="hint" id="status">Webcam belum aktif. Izinkan akses kamera jika diminta.</p>
+<form method="post" id="finishForm"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="webcam_photo_after" id="photoData"><button class="btn" type="submit">Simpan Foto & Selesaikan</button></form>
+<script>
+let stream=null;
+async function startCamera(){try{stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});document.getElementById('video').srcObject=stream;document.getElementById('status').textContent='Webcam aktif. Pastikan kondisi Labkom terlihat, lalu tekan Ambil Foto.';}catch(e){document.getElementById('status').textContent='Webcam tidak dapat dibuka. Pastikan izin kamera aktif dan halaman dibuka melalui localhost/HTTPS. '+e.message;}}
+function takePhoto(){const v=document.getElementById('video');if(!stream||!v.videoWidth){alert('Aktifkan webcam terlebih dahulu.');return;}const c=document.getElementById('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);const data=c.toDataURL('image/jpeg',0.82);document.getElementById('photoData').value=data;const img=document.getElementById('preview');img.src=data;img.hidden=false;document.getElementById('status').textContent='Foto berhasil diambil. Periksa pratinjau, lalu tekan Simpan Foto & Selesaikan.';}
+function stopCamera(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}document.getElementById('video').srcObject=null;}
+document.getElementById('finishForm').addEventListener('submit',e=>{if(!document.getElementById('photoData').value){e.preventDefault();alert('Ambil foto kondisi akhir terlebih dahulu.');}});
+window.addEventListener('beforeunload',stopCamera);
+</script>
+{% endif %}
+<p class="hint">Foto akan disimpan di komputer server Labkom dan dikirim ke Telegram setelah transaksi selesai, jika Telegram sudah dikonfigurasi.</p><p><a href="/">Kembali ke halaman utama</a></p></main></body></html>
