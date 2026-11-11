@@ -261,7 +261,7 @@
     <section class="panel">
       <div class="panel-head">
         <div><h2>Akun guru</h2><p class="muted">Tambah guru baru atau atur ulang password.</p></div>
-        <span class="tag">{{ teachers|length }} aktif</span>
+        <span class="tag">{{ teachers_active }} aktif</span>
       </div>
       <form action="{{ url_for('manage_teachers') }}" method="post" class="inline-form" data-once>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -271,16 +271,28 @@
       </form>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Nama guru aktif</th><th></th></tr></thead>
+          <thead><tr><th>Nama guru</th><th>Status</th></tr></thead>
           <tbody>
             {% for t in teachers %}
             <tr>
-              <td>{{ t.nama }}</td>
               <td>
+                <div class="person">
+                  <span class="initials">{{ t.nama[:1]|upper }}</span>
+                  <span><strong>{{ t.nama }}</strong>{% if t.aktif == 1 %}<span class="tag tag-success">Aktif</span>{% else %}<span class="tag">Nonaktif</span>{% endif %}</span>
+                </div>
+              </td>
+              <td>
+                {% if t.aktif == 1 %}
                 <form method="post" action="{{ url_for('delete_teacher', name=t.nama) }}" onsubmit="return confirm('Nonaktifkan akun guru ini')">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button class="btn btn-outline-danger btn-small" type="submit">Nonaktifkan</button>
                 </form>
+                {% else %}
+                <form method="post" action="{{ url_for('activate_teacher', name=t.nama) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-secondary btn-small" type="submit">Aktifkan</button>
+                </form>
+                {% endif %}
               </td>
             </tr>
             {% else %}

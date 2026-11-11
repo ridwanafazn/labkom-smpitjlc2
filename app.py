@@ -579,6 +579,8 @@ def add_security_headers(response):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=()")
+    if response.mimetype == "text/html":
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -714,6 +716,17 @@ def delete_teacher(name):
     return redirect(url_for("index"))
 
 
+@app.route("/admin/teachers/<path:name>/activate", methods=["POST"])
+def activate_teacher(name):
+    if session.get("role") != "admin":
+        abort(403)
+    with db() as c:
+        c.execute("UPDATE teachers SET aktif=1 WHERE nama=? AND role='teacher'", (name,))
+    app.logger.info("AUDIT aktifkan guru=%s oleh=%s", name, session.get("user_name"))
+    flash("Akun guru diaktifkan kembali.", "success")
+    return redirect(url_for("index"))
+
+
 @app.route("/admin/students", methods=["POST"])
 def manage_students():
     if session.get("role") != "admin":
@@ -787,7 +800,8 @@ def index():
                 "WHERE status='Dipinjam' ORDER BY tanggal,waktu_mulai LIMIT 100"
             ).fetchall()
             teachers = c.execute(
-                "SELECT nama FROM teachers WHERE aktif=1 AND role='teacher' ORDER BY nama"
+                "SELECT nama,aktif FROM teachers WHERE role='teacher' "
+                "ORDER BY aktif DESC, nama"
             ).fetchall()
             students = c.execute(
                 "SELECT nis,nama,kelas FROM students ORDER BY kelas, nama"
@@ -808,6 +822,7 @@ def index():
             ).fetchall()
             teachers = []
             students = []
+        teachers_active = sum(1 for teacher in teachers if teacher["aktif"] == 1)
         students_count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
         active = c.execute("SELECT COUNT(*) n FROM loans WHERE status='Dipinjam'").fetchone()["n"]
 
@@ -819,6 +834,7 @@ def index():
         schedule=schedule,
         active_loans=active_loans,
         teachers=teachers,
+        teachers_active=teachers_active,
         students=students,
         today=datetime.now(WIB).strftime("%Y-%m-%d"),
         page=page,

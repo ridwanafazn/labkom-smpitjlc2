@@ -34,10 +34,10 @@
   </aside>
 
   <div class="main">
-    <header class="mobile-head">
+    <header class="topbar">
       <button type="button" class="menu-button" onclick="toggleSidebar()">Menu</button>
-      <span class="brand-mark">L</span>
-      <strong>Labkom</strong>
+      <span class="topbar-title">Sistem Peminjaman</span>
+      <span class="topbar-user">{{ current_user }}</span>
     </header>
     <main class="content">
       {% include "_notices.html" %}

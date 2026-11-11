@@ -331,6 +331,31 @@ def test_readd_teacher_reactivates_and_hashes_password(client):
     assert "password-baru" not in row["password_hash"]
 
 
+def test_deactivated_teacher_gets_activate_button(client):
+    add_teacher("Guru Cuti")
+    login(client)
+    response = client.post(
+        "/admin/teachers/Guru%20Cuti/delete",
+        data={},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"Guru Cuti" in response.data
+    assert b"Aktifkan" in response.data
+    with labkom.db() as c:
+        row = c.execute(
+            "SELECT aktif FROM teachers WHERE nama='Guru Cuti'"
+        ).fetchone()
+    assert row["aktif"] == 0
+
+    client.post("/admin/teachers/Guru%20Cuti/activate", follow_redirects=True)
+    with labkom.db() as c:
+        row = c.execute(
+            "SELECT aktif FROM teachers WHERE nama='Guru Cuti'"
+        ).fetchone()
+    assert row["aktif"] == 1
+
+
 def test_partial_unique_index_blocks_duplicate_active_student(client):
     add_student()
     insert_loan(peminjam_type="Murid", nis="123", created_by="Guru A")

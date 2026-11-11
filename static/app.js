@@ -12,7 +12,7 @@ function showView(id, button) {
   if (window.location.hash !== "#" + id) {
     history.replaceState(null, "", id === "dashboard" ? window.location.pathname : "#" + id);
   }
-  toggleSidebar(false);
+  if (window.matchMedia("(max-width: 760px)").matches) toggleSidebar(false);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -22,13 +22,35 @@ function goView(id) {
 }
 
 function toggleSidebar(force) {
+  const app = document.querySelector(".app");
   const sidebar = document.getElementById("sidebar");
   const backdrop = document.getElementById("sidebarBackdrop");
-  if (!sidebar) return;
-  const open = typeof force === "boolean" ? force : !sidebar.classList.contains("open");
-  sidebar.classList.toggle("open", open);
-  backdrop?.classList.toggle("show", open);
+  if (!app || !sidebar) return;
+  if (window.matchMedia("(max-width: 760px)").matches) {
+    app.classList.remove("sidebar-collapsed");
+    const open = typeof force === "boolean" ? force : !sidebar.classList.contains("open");
+    sidebar.classList.toggle("open", open);
+    backdrop?.classList.toggle("show", open);
+  } else {
+    sidebar.classList.remove("open");
+    backdrop?.classList.remove("show");
+    if (typeof force === "boolean") app.classList.toggle("sidebar-collapsed", !force);
+    else app.classList.toggle("sidebar-collapsed");
+  }
 }
+
+window.addEventListener("resize", () => {
+  const app = document.querySelector(".app");
+  const sidebar = document.getElementById("sidebar");
+  const backdrop = document.getElementById("sidebarBackdrop");
+  if (!app || !sidebar) return;
+  if (window.matchMedia("(max-width: 760px)").matches) {
+    app.classList.remove("sidebar-collapsed");
+  } else {
+    sidebar.classList.remove("open");
+    backdrop?.classList.remove("show");
+  }
+});
 
 function filterTable(input, tableId) {
   const query = input.value.trim().toLowerCase();
