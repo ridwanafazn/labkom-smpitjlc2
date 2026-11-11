@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0b1f3a">
+  <meta name="theme-color" content="#f2f2f0">
   <title>{% block title %}Labkom - Sistem Peminjaman{% endblock %}</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230b1f3a'/%3E%3Crect y='52' width='64' height='12' fill='%23b01e2e'/%3E%3Cpath d='M18 20h28v22H18z' fill='none' stroke='white' stroke-width='4'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111827'/%3E%3Crect y='52' width='64' height='12' fill='%23b4232f'/%3E%3Cpath d='M18 20h28v22H18z' fill='none' stroke='white' stroke-width='4'/%3E%3C/svg%3E">
+  <link rel="preload" href="{{ url_for('static', filename='fonts/manrope-latin.woff2') }}" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   {% block head %}{% endblock %}
 </head>

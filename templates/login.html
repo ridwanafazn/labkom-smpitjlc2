@@ -2,50 +2,38 @@
 {% block title %}Masuk - Labkom{% endblock %}
 {% block body_class %}auth-body{% endblock %}
 {% block body %}
-<main class="auth-shell">
-  <aside class="auth-aside">
-    <div class="auth-brand">
+<main class="auth">
+  <div class="auth-brand">
+    <span class="brand-mark">L</span>
+    <span>
       <strong>Labkom</strong>
-      <span>SMK IT JLC 2</span>
-    </div>
-    <div class="auth-aside-copy">
-      <p class="auth-kicker">Sistem Peminjaman</p>
-      <h1>Labkom SMK IT JLC 2</h1>
-      <p>Masuk untuk mengelola peminjaman, jadwal, dan dokumentasi laboratorium.</p>
-    </div>
-    <p class="auth-foot">Sistem internal sekolah</p>
-  </aside>
-
-  <section class="auth-panel">
-    <div class="auth-mobile-brand">
-      <strong>Labkom</strong>
-      <span>SMK IT JLC 2</span>
-    </div>
-    <div class="auth-card">
-      <h1>Masuk</h1>
-      <p>Gunakan akun yang terdaftar.</p>
-      {% include "_notices.html" %}
-      <form method="post" data-once>
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="field">
-          <label for="login-nama">Nama</label>
-          <select id="login-nama" name="nama" required autocomplete="username">
-            <option value="">Pilih nama</option>
-            <option value="{{ admin_name }}">{{ admin_name }} - Admin Labkom</option>
-            {% for t in teachers %}<option value="{{ t.nama }}">{{ t.nama }} - Guru</option>{% endfor %}
-          </select>
+      <small>SMK IT JLC 2</small>
+    </span>
+  </div>
+  <section class="auth-card">
+    <h1>Masuk</h1>
+    <p>Gunakan akun yang terdaftar.</p>
+    {% include "_notices.html" %}
+    <form method="post" data-once>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field">
+        <label for="login-nama">Nama</label>
+        <select id="login-nama" name="nama" required autocomplete="username">
+          <option value="">Pilih nama</option>
+          <option value="{{ admin_name }}">{{ admin_name }} - Admin Labkom</option>
+          {% for t in teachers %}<option value="{{ t.nama }}">{{ t.nama }} - Guru</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="login-password">Password</label>
+        <div class="password-wrap">
+          <input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="Masukkan password">
+          <button type="button" class="password-toggle" onclick="togglePassword('login-password', this)">Lihat</button>
         </div>
-        <div class="field">
-          <label for="login-password">Password</label>
-          <div class="password-wrap">
-            <input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="Masukkan password">
-            <button type="button" class="password-toggle" onclick="togglePassword('login-password', this)">Lihat</button>
-          </div>
-        </div>
-        <button class="btn btn-primary btn-block" type="submit">Masuk</button>
-      </form>
-      <p class="auth-note">Hubungi admin jika password belum diatur.</p>
-    </div>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Masuk</button>
+    </form>
+    <p class="auth-note">Hubungi admin jika password belum diatur.</p>
   </section>
 </main>
 {% endblock %}

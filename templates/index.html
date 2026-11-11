@@ -279,7 +279,7 @@
               <td>
                 <form method="post" action="{{ url_for('delete_teacher', name=t.nama) }}" onsubmit="return confirm('Nonaktifkan akun guru ini')">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="btn btn-danger btn-small" type="submit">Nonaktifkan</button>
+                  <button class="btn btn-outline-danger btn-small" type="submit">Nonaktifkan</button>
                 </form>
               </td>
             </tr>
@@ -316,7 +316,7 @@
               <td>
                 <form method="post" action="{{ url_for('delete_student', nis=s.nis) }}" onsubmit="return confirm('Hapus data murid ini')">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="btn btn-danger btn-small" type="submit">Hapus</button>
+                  <button class="btn btn-outline-danger btn-small" type="submit">Hapus</button>
                 </form>
               </td>
             </tr>

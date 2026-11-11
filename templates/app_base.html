@@ -4,13 +4,18 @@
 <div class="app">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <strong>Labkom</strong>
-      <span>SMK IT JLC 2</span>
+      <span class="brand-mark">L</span>
+      <span class="brand-copy">
+        <strong>Labkom</strong>
+        <small>SMK IT JLC 2</small>
+      </span>
     </div>
     <nav class="nav" aria-label="Navigasi utama">
+      <p class="nav-label">Menu</p>
       <button type="button" class="nav-item active" data-view="dashboard" onclick="showView('dashboard', this)">Dashboard</button>
       <button type="button" class="nav-item" data-view="guru" onclick="showView('guru', this)">Peminjaman guru</button>
       <button type="button" class="nav-item" data-view="murid" onclick="showView('murid', this)">Scan QR murid</button>
+      <p class="nav-label">Data</p>
       <button type="button" class="nav-item" data-view="riwayat" onclick="showView('riwayat', this)">Riwayat</button>
       {% if is_admin %}
       <button type="button" class="nav-item" data-view="admin" onclick="showView('admin', this)">Manajemen</button>
@@ -18,8 +23,11 @@
     </nav>
     <div class="sidebar-foot">
       <div class="user">
-        <strong>{{ current_user }}</strong>
-        <span>{{ 'Admin Labkom' if is_admin else 'Guru' }}</span>
+        <span class="avatar">{{ current_user[:1]|upper }}</span>
+        <span>
+          <strong>{{ current_user }}</strong>
+          <span>{{ 'Admin Labkom' if is_admin else 'Guru' }}</span>
+        </span>
       </div>
       <a href="{{ url_for('logout') }}">Keluar</a>
     </div>
@@ -28,6 +36,7 @@
   <div class="main">
     <header class="mobile-head">
       <button type="button" class="menu-button" onclick="toggleSidebar()">Menu</button>
+      <span class="brand-mark">L</span>
       <strong>Labkom</strong>
     </header>
     <main class="content">
