@@ -7,3 +7,4 @@ backup_labkom/
 labkom.db
 
 .vercel
+.env*
