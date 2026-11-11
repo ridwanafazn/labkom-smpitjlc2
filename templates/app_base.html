@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block body_class %}app-body{% endblock %}
+{% block body %}
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="{{ url_for('index') }}">
+      <span class="brand-mark">{{ icon('book', 22) }}</span>
+      <span><strong>Labkom</strong><small>Sistem Peminjaman</small></span>
+    </a>
+
+    <nav class="nav" aria-label="Navigasi utama">
+      <button type="button" class="nav-item active" data-view="dashboard" onclick="showView('dashboard', this)">
+        {{ icon('grid') }}<span>Dashboard</span>
+      </button>
+      <button type="button" class="nav-item" data-view="guru" onclick="showView('guru', this)">
+        {{ icon('plus') }}<span>Peminjaman Guru</span>
+      </button>
+      <button type="button" class="nav-item" data-view="murid" onclick="showView('murid', this)">
+        {{ icon('qr') }}<span>Scan QR Murid</span>
+      </button>
+      <button type="button" class="nav-item" data-view="riwayat" onclick="showView('riwayat', this)">
+        {{ icon('history') }}<span>Riwayat</span>
+      </button>
+      {% if is_admin %}
+      <button type="button" class="nav-item" data-view="admin" onclick="showView('admin', this)">
+        {{ icon('users') }}<span>Manajemen</span>
+      </button>
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="user-chip">
+        <span class="avatar">{{ current_user[:1]|upper }}</span>
+        <span class="user-meta">
+          <strong>{{ current_user }}</strong>
+          <small>{{ 'Admin / PJ Labkom' if is_admin else 'Guru' }}</small>
+        </span>
+      </div>
+      <a class="logout-link" href="{{ url_for('logout') }}">{{ icon('logout', 16) }} Keluar</a>
+    </div>
+  </aside>
+
+  <div class="main-shell">
+    <header class="topbar">
+      <button type="button" class="icon-btn menu-btn" onclick="toggleSidebar()" aria-label="Buka menu">
+        {{ icon('menu', 20) }}
+      </button>
+      <span class="topbar-brand">Labkom <span>SMK IT JLC 2</span></span>
+      <span class="status-pill"><span class="dot"></span> Sistem aktif</span>
+    </header>
+
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+<div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
+{% endblock %}

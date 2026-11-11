@@ -5,3 +5,5 @@ __pycache__/
 uploads_labkom/
 backup_labkom/
 labkom.db
+
+.vercel

@@ -4,6 +4,7 @@ import glob
 import io
 import json
 import logging
+import mimetypes
 import os
 import shutil
 import sqlite3
@@ -26,7 +27,6 @@ from flask import (
     redirect,
     render_template,
     request,
-    send_from_directory,
     session,
     url_for,
 )
@@ -39,19 +39,34 @@ from werkzeug.utils import secure_filename
 ROOT = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(ROOT, ".env"))
 
-DB_PATH = os.environ.get("LABKOM_DB_PATH", os.path.join(ROOT, "labkom.db"))
+ON_VERCEL = bool(os.environ.get("VERCEL"))
+RUNTIME_DIR = "/tmp" if ON_VERCEL else ROOT
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_POSTGRES = bool(DATABASE_URL)
+
+DB_PATH = os.environ.get("LABKOM_DB_PATH", os.path.join(RUNTIME_DIR, "labkom.db"))
 STUDENTS_PATH = os.environ.get("LABKOM_STUDENTS_PATH", os.path.join(ROOT, "students.json"))
-UPLOAD_DIR = os.environ.get("LABKOM_UPLOAD_DIR", os.path.join(ROOT, "uploads_labkom"))
-BACKUP_DIR = os.environ.get("LABKOM_BACKUP_DIR", os.path.join(ROOT, "backup_labkom"))
+UPLOAD_DIR = os.environ.get("LABKOM_UPLOAD_DIR", os.path.join(RUNTIME_DIR, "uploads_labkom"))
+BACKUP_DIR = os.environ.get("LABKOM_BACKUP_DIR", os.path.join(RUNTIME_DIR, "backup_labkom"))
 BACKUP_KEEP = max(1, int(os.environ.get("BACKUP_KEEP", "10")))
 BACKUP_COPY_DIR = os.environ.get("BACKUP_COPY_DIR", "").strip()
 BACKUP_PASSWORD = os.environ.get("BACKUP_PASSWORD", "")
 PAGE_SIZE = max(1, int(os.environ.get("PAGE_SIZE", "50")))
-MAX_UPLOAD_MB = max(1, int(os.environ.get("MAX_UPLOAD_MB", "12")))
+MAX_UPLOAD_MB = max(1, int(os.environ.get("MAX_UPLOAD_MB", "4" if ON_VERCEL else "12")))
 LOGIN_MAX_ATTEMPTS = max(1, int(os.environ.get("LOGIN_MAX_ATTEMPTS", "5")))
 LOGIN_WINDOW = max(60, int(os.environ.get("LOGIN_WINDOW_SECONDS", "900")))
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 WIB = timezone(timedelta(hours=7), "WIB")
+LABKOM_LOCK_ID = 728199
+
+if USE_POSTGRES:
+    import psycopg
+    from psycopg.rows import dict_row
+
+    INTEGRITY_ERRORS = (psycopg.IntegrityError,)
+else:
+    psycopg = None
+    INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
 ADMIN_NAME = os.environ.get("ADMIN_NAME", "Rahma Maulidina").strip() or "Rahma Maulidina"
 
 SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "").strip()
@@ -65,7 +80,9 @@ app.secret_key = SECRET_KEY
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
+    SESSION_COOKIE_SECURE=os.environ.get(
+        "COOKIE_SECURE", "1" if ON_VERCEL else "0"
+    ) == "1",
     MAX_CONTENT_LENGTH=MAX_UPLOAD_MB * 1024 * 1024,
     MAX_FORM_MEMORY_SIZE=2 * 1024 * 1024,
 )
@@ -78,7 +95,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 def configure_logging():
-    log_dir = os.environ.get("LABKOM_LOG_DIR", os.path.join(ROOT, "logs"))
+    log_dir = os.environ.get("LABKOM_LOG_DIR", os.path.join(RUNTIME_DIR, "logs"))
     try:
         os.makedirs(log_dir, exist_ok=True)
         if not any(isinstance(h, RotatingFileHandler) for h in app.logger.handlers):
@@ -98,13 +115,49 @@ def configure_logging():
 configure_logging()
 
 
+class PgConnection:
+    """Adaptor kecil agar query bergaya SQLite (?) bisa jalan di PostgreSQL."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        return self._conn.execute(sql.replace("?", "%s"), params)
+
+    def executemany(self, sql, seq):
+        return self._conn.executemany(sql.replace("?", "%s"), seq)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+
 @contextmanager
 def db(immediate=False):
-    """Buka koneksi SQLite, commit/rollback, lalu tutup secara eksplisit.
+    """Buka koneksi database, commit/rollback, lalu tutup secara eksplisit.
 
-    immediate=True memakai BEGIN IMMEDIATE agar cek bentrok + insert berjalan
-    dalam satu transaksi tulis yang tidak bisa disela request lain.
+    SQLite memakai BEGIN IMMEDIATE, PostgreSQL memakai advisory transaction lock
+    agar cek bentrok + insert tidak disela request lain.
     """
+    if USE_POSTGRES:
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=15)
+        try:
+            if immediate:
+                conn.execute("SELECT pg_advisory_xact_lock(%s)", (LABKOM_LOCK_ID,))
+            yield PgConnection(conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        return
+
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
@@ -120,12 +173,24 @@ def db(immediate=False):
         conn.close()
 
 
+def table_columns(c, table):
+    if USE_POSTGRES:
+        rows = c.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name=?",
+            (table,),
+        ).fetchall()
+        return {row["column_name"] for row in rows}
+    return {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
 def init_db():
     with db() as c:
-        c.execute("PRAGMA journal_mode=WAL")
+        if not USE_POSTGRES:
+            c.execute("PRAGMA journal_mode=WAL")
+        id_column = "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
         c.execute(
-            """CREATE TABLE IF NOT EXISTS loans (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            f"""CREATE TABLE IF NOT EXISTS loans (
+            id {id_column},
             peminjam_type TEXT NOT NULL,
             nama TEXT NOT NULL,
             kelas TEXT DEFAULT '',
@@ -143,7 +208,7 @@ def init_db():
         )"""
         )
         # Migrasi aman: menambah kolom tanpa menghapus data transaksi lama.
-        cols = {row[1] for row in c.execute("PRAGMA table_info(loans)").fetchall()}
+        cols = table_columns(c, "loans")
         if "photo_before" not in cols:
             c.execute("ALTER TABLE loans ADD COLUMN photo_before TEXT DEFAULT ''")
         if "photo_after" not in cols:
@@ -161,7 +226,7 @@ def init_db():
             nama TEXT PRIMARY KEY, aktif INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
         )"""
         )
-        teacher_cols = {row[1] for row in c.execute("PRAGMA table_info(teachers)").fetchall()}
+        teacher_cols = table_columns(c, "teachers")
         if "password_hash" not in teacher_cols:
             c.execute("ALTER TABLE teachers ADD COLUMN password_hash TEXT DEFAULT ''")
         if "role" not in teacher_cols:
@@ -169,6 +234,14 @@ def init_db():
         c.execute(
             """CREATE TABLE IF NOT EXISTS students (
             nis TEXT PRIMARY KEY, nama TEXT NOT NULL, kelas TEXT NOT NULL
+        )"""
+        )
+        blob_type = "BYTEA" if USE_POSTGRES else "BLOB"
+        c.execute(
+            f"""CREATE TABLE IF NOT EXISTS photos (
+            filename TEXT PRIMARY KEY,
+            content_type TEXT NOT NULL,
+            data {blob_type} NOT NULL
         )"""
         )
         # Index untuk pola query yang dipakai halaman utama dan pengecekan bentrok.
@@ -185,7 +258,7 @@ def init_db():
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_loans_one_active_student "
                 "ON loans(nis) WHERE status='Dipinjam' AND peminjam_type='Murid'"
             )
-        except (sqlite3.IntegrityError, sqlite3.OperationalError):
+        except Exception:
             app.logger.warning(
                 "Index murid aktif tidak dibuat karena masih ada data pinjaman ganda."
             )
@@ -216,17 +289,64 @@ def init_db():
                     if nis and nama and kelas:
                         rows.append((nis, nama, kelas))
                 c.executemany(
-                    "INSERT OR IGNORE INTO students(nis,nama,kelas) VALUES(?,?,?)", rows
+                    "INSERT INTO students(nis,nama,kelas) VALUES(?,?,?) "
+                    "ON CONFLICT (nis) DO NOTHING",
+                    rows,
                 )
             except (OSError, json.JSONDecodeError, TypeError, AttributeError) as exc:
                 app.logger.warning("Gagal mengimpor students.json: %s", exc)
+
+
+def photo_content_type(filename):
+    return mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+
+def save_photo_record(filename, file_path):
+    """Di PostgreSQL, simpan foto sebagai BYTEA agar tidak butuh disk permanen."""
+    if not USE_POSTGRES:
+        return
+    with open(file_path, "rb") as f:
+        data = f.read()
+    with db() as c:
+        c.execute(
+            "INSERT INTO photos(filename,content_type,data) VALUES(?,?,?) "
+            "ON CONFLICT (filename) DO UPDATE SET "
+            "content_type=excluded.content_type, data=excluded.data",
+            (filename, photo_content_type(filename), data),
+        )
+    os.remove(file_path)
+
+
+def get_photo(filename):
+    safe_name = os.path.basename(filename)
+    if USE_POSTGRES:
+        with db() as c:
+            row = c.execute(
+                "SELECT content_type,data FROM photos WHERE filename=?", (safe_name,)
+            ).fetchone()
+        if not row:
+            return None
+        return bytes(row["data"]), row["content_type"]
+    path = os.path.join(UPLOAD_DIR, safe_name)
+    if not os.path.isfile(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read(), photo_content_type(safe_name)
 
 
 def remove_uploaded_photo(filename):
     """Hapus foto yang gagal dipakai agar tidak menumpuk sebagai file yatim."""
     if not filename:
         return
-    path = os.path.join(UPLOAD_DIR, os.path.basename(filename))
+    safe_name = os.path.basename(filename)
+    if USE_POSTGRES:
+        try:
+            with db() as c:
+                c.execute("DELETE FROM photos WHERE filename=?", (safe_name,))
+        except Exception:
+            app.logger.warning("Gagal menghapus foto dari database: %s", safe_name)
+        return
+    path = os.path.join(UPLOAD_DIR, safe_name)
     try:
         if os.path.isfile(path):
             os.remove(path)
@@ -276,6 +396,7 @@ def save_uploaded_photo(file_obj, prefix):
     try:
         file_obj.save(path)
         _normalize_image(path, ext)
+        save_photo_record(filename, path)
     except Exception:
         remove_uploaded_photo(filename)
         raise
@@ -296,9 +417,11 @@ def save_webcam_photo(data_url, prefix):
         ext = ".png" if "image/png" in header else ".jpg"
         filename = f"{prefix}_{datetime.now(WIB).strftime('%Y%m%d_%H%M%S_%f')}{ext}"
         os.makedirs(UPLOAD_DIR, exist_ok=True)
-        with open(os.path.join(UPLOAD_DIR, filename), "wb") as f:
+        path = os.path.join(UPLOAD_DIR, filename)
+        with open(path, "wb") as f:
             f.write(raw)
-        _normalize_image(os.path.join(UPLOAD_DIR, filename), ext)
+        _normalize_image(path, ext)
+        save_photo_record(filename, path)
         return filename
     except Exception:
         if filename:
@@ -332,18 +455,18 @@ def telegram_notify(loan):
             ("photo_after", "Foto kondisi akhir"),
         ]:
             filename = loan.get(field) or ""
-            path = os.path.join(UPLOAD_DIR, filename) if filename else ""
-            if path and os.path.isfile(path):
-                with open(path, "rb") as photo:
-                    pr = requests.post(
-                        f"https://api.telegram.org/bot{token}/sendPhoto",
-                        data={
-                            "chat_id": chat_id,
-                            "caption": f"{caption} — {loan['nama']} ({loan['lab']})",
-                        },
-                        files={"photo": photo},
-                        timeout=90,
-                    )
+            photo = get_photo(filename) if filename else None
+            if photo:
+                data, content_type = photo
+                pr = requests.post(
+                    f"https://api.telegram.org/bot{token}/sendPhoto",
+                    data={
+                        "chat_id": chat_id,
+                        "caption": f"{caption} — {loan['nama']} ({loan['lab']})",
+                    },
+                    files={"photo": (filename, data, content_type)},
+                    timeout=90,
+                )
                 pr.raise_for_status()
                 if not pr.json().get("ok"):
                     return False, "Pesan terkirim, tetapi Telegram gagal mengirim salah satu foto."
@@ -450,6 +573,46 @@ def inject_user():
     }
 
 
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=()")
+    return response
+
+
+@app.errorhandler(403)
+def forbidden(error):
+    return render_template(
+        "error.html",
+        code=403,
+        title="Akses ditolak",
+        message="Akun Anda tidak memiliki izin untuk membuka halaman ini.",
+    ), 403
+
+
+@app.errorhandler(404)
+def not_found(error):
+    return render_template(
+        "error.html",
+        code=404,
+        title="Halaman tidak ditemukan",
+        message="Alamat yang Anda buka tidak tersedia atau sudah dipindahkan.",
+    ), 404
+
+
+@app.errorhandler(500)
+def server_error(error):
+    app.logger.exception("Kesalahan server")
+    return render_template(
+        "error.html",
+        code=500,
+        title="Terjadi kesalahan",
+        message="Sistem mengalami kendala. Silakan coba lagi beberapa saat lagi.",
+    ), 500
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -551,6 +714,48 @@ def delete_teacher(name):
     return redirect(url_for("index"))
 
 
+@app.route("/admin/students", methods=["POST"])
+def manage_students():
+    if session.get("role") != "admin":
+        abort(403)
+    nis = request.form.get("nis", "").strip()
+    nama = request.form.get("nama", "").strip()
+    kelas = request.form.get("kelas", "").strip()
+    if not all([nis, nama, kelas]):
+        flash("Isi NIS, nama, dan kelas murid.", "error")
+    else:
+        with db() as c:
+            c.execute(
+                """INSERT INTO students(nis,nama,kelas) VALUES(?,?,?)
+                   ON CONFLICT (nis) DO UPDATE SET
+                   nama=excluded.nama, kelas=excluded.kelas""",
+                (nis, nama, kelas),
+            )
+        app.logger.info("AUDIT simpan murid=%s oleh=%s", nis, session.get("user_name"))
+        flash(f"Data murid {nama} disimpan.", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/admin/students/<nis>/delete", methods=["POST"])
+def delete_student(nis):
+    if session.get("role") != "admin":
+        abort(403)
+    with db() as c:
+        active = c.execute(
+            "SELECT 1 FROM loans WHERE nis=? AND status='Dipinjam' LIMIT 1", (nis,)
+        ).fetchone()
+        if active:
+            flash(
+                "Data murid tidak dihapus karena masih memiliki peminjaman aktif.",
+                "error",
+            )
+            return redirect(url_for("index"))
+        c.execute("DELETE FROM students WHERE nis=?", (nis,))
+    app.logger.info("AUDIT hapus murid=%s oleh=%s", nis, session.get("user_name"))
+    flash("Data murid dihapus.", "success")
+    return redirect(url_for("index"))
+
+
 @app.route("/")
 def index():
     try:
@@ -584,6 +789,9 @@ def index():
             teachers = c.execute(
                 "SELECT nama FROM teachers WHERE aktif=1 AND role='teacher' ORDER BY nama"
             ).fetchall()
+            students = c.execute(
+                "SELECT nis,nama,kelas FROM students ORDER BY kelas, nama"
+            ).fetchall()
         else:
             loans = c.execute(
                 "SELECT * FROM loans WHERE created_by=? ORDER BY id DESC LIMIT ? OFFSET ?",
@@ -599,6 +807,7 @@ def index():
                 "WHERE status='Dipinjam' ORDER BY tanggal,waktu_mulai LIMIT 100"
             ).fetchall()
             teachers = []
+            students = []
         students_count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
         active = c.execute("SELECT COUNT(*) n FROM loans WHERE status='Dipinjam'").fetchone()["n"]
 
@@ -610,6 +819,7 @@ def index():
         schedule=schedule,
         active_loans=active_loans,
         teachers=teachers,
+        students=students,
         today=datetime.now(WIB).strftime("%Y-%m-%d"),
         page=page,
         pages=pages,
@@ -689,7 +899,7 @@ def borrow_student():
                     session["user_name"],
                 ),
             )
-        except sqlite3.IntegrityError:
+        except INTEGRITY_ERRORS:
             flash(
                 "Murid ini masih memiliki peminjaman aktif. "
                 "Selesaikan transaksi tersebut terlebih dahulu.",
@@ -869,6 +1079,25 @@ def _copy_backup_offsite(backup_path):
         app.logger.warning("Gagal menyalin backup ke %s", BACKUP_COPY_DIR)
 
 
+def _open_backup_archive(backup_path):
+    if BACKUP_PASSWORD:
+        try:
+            import pyzipper
+        except ImportError as exc:
+            raise RuntimeError(
+                "BACKUP_PASSWORD diset tetapi pyzipper belum terpasang."
+            ) from exc
+        archive = pyzipper.AESZipFile(
+            backup_path,
+            "w",
+            compression=pyzipper.ZIP_DEFLATED,
+            encryption=pyzipper.WZ_AES,
+        )
+        archive.setpassword(BACKUP_PASSWORD.encode("utf-8"))
+        return archive
+    return zipfile.ZipFile(backup_path, "w", compression=zipfile.ZIP_DEFLATED)
+
+
 def _write_backup_zip(backup_path, temp_db):
     upload_files = []
     if os.path.isdir(UPLOAD_DIR):
@@ -877,28 +1106,26 @@ def _write_backup_zip(backup_path, temp_db):
             if os.path.isfile(file_path):
                 upload_files.append((file_path, f"uploads_labkom/{filename}"))
 
-    if BACKUP_PASSWORD:
-        try:
-            import pyzipper
-        except ImportError as exc:
-            raise RuntimeError(
-                "BACKUP_PASSWORD diset tetapi pyzipper belum terpasang."
-            ) from exc
-        with pyzipper.AESZipFile(
-            backup_path,
-            "w",
-            compression=pyzipper.ZIP_DEFLATED,
-            encryption=pyzipper.WZ_AES,
-        ) as archive:
-            archive.setpassword(BACKUP_PASSWORD.encode("utf-8"))
-            archive.write(temp_db, arcname="labkom.db")
-            for file_path, arcname in upload_files:
-                archive.write(file_path, arcname=arcname)
-    else:
-        with zipfile.ZipFile(backup_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.write(temp_db, arcname="labkom.db")
-            for file_path, arcname in upload_files:
-                archive.write(file_path, arcname=arcname)
+    with _open_backup_archive(backup_path) as archive:
+        archive.write(temp_db, arcname="labkom.db")
+        for file_path, arcname in upload_files:
+            archive.write(file_path, arcname=arcname)
+
+
+def _write_pg_backup(backup_path):
+    with db() as c:
+        tables = {
+            table: [dict(row) for row in c.execute(f"SELECT * FROM {table}").fetchall()]
+            for table in ("loans", "teachers", "students")
+        }
+        photos = c.execute("SELECT filename,content_type,data FROM photos").fetchall()
+    with _open_backup_archive(backup_path) as archive:
+        archive.writestr(
+            "data.json",
+            json.dumps(tables, ensure_ascii=False, indent=2, default=str),
+        )
+        for photo in photos:
+            archive.writestr(f"photos/{photo['filename']}", bytes(photo["data"]))
 
 
 @app.route("/admin/clear-loans", methods=["POST"])
@@ -915,11 +1142,14 @@ def clear_all_loans():
     backup_path = os.path.join(BACKUP_DIR, f"cadangan_sebelum_bersih_{stamp}.zip")
     temp_db = None
     try:
-        fd, temp_db = tempfile.mkstemp(prefix="labkom_backup_", suffix=".db")
-        os.close(fd)
-        with sqlite3.connect(DB_PATH) as source, sqlite3.connect(temp_db) as target:
-            source.backup(target)
-        _write_backup_zip(backup_path, temp_db)
+        if USE_POSTGRES:
+            _write_pg_backup(backup_path)
+        else:
+            fd, temp_db = tempfile.mkstemp(prefix="labkom_backup_", suffix=".db")
+            os.close(fd)
+            with sqlite3.connect(DB_PATH) as source, sqlite3.connect(temp_db) as target:
+                source.backup(target)
+            _write_backup_zip(backup_path, temp_db)
         _copy_backup_offsite(backup_path)
         _prune_backups()
     except Exception as exc:
@@ -941,11 +1171,14 @@ def clear_all_loans():
     try:
         with db() as c:
             c.execute("DELETE FROM loans")
-        # Folder ini khusus untuk dokumentasi foto peminjaman.
-        for filename in os.listdir(UPLOAD_DIR):
-            file_path = os.path.join(UPLOAD_DIR, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
+            if USE_POSTGRES:
+                c.execute("DELETE FROM photos")
+        if not USE_POSTGRES:
+            # Folder ini khusus untuk dokumentasi foto peminjaman.
+            for filename in os.listdir(UPLOAD_DIR):
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
     except Exception as exc:
         app.logger.exception("Pembersihan data gagal setelah backup")
         flash(
@@ -985,8 +1218,13 @@ def uploaded_photo(filename):
                 filename,
             )
             abort(403)
-    response = send_from_directory(UPLOAD_DIR, filename)
+    photo = get_photo(filename)
+    if not photo:
+        abort(404)
+    data, content_type = photo
+    response = Response(data, mimetype=content_type)
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cache-Control"] = "private, max-age=3600"
     return response
 
 

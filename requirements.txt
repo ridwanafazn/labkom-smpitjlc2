@@ -6,3 +6,4 @@ requests==2.34.2
 waitress==3.0.2
 python-dotenv==1.2.4
 pyzipper==0.4.0
+psycopg[binary]==3.3.8

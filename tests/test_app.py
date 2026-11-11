@@ -367,6 +367,43 @@ def test_photo_access_ownership(client):
     assert response.headers["X-Content-Type-Options"] == "nosniff"
 
 
+def test_admin_manages_students(client):
+    login(client)
+    response = client.post(
+        "/admin/students",
+        data={"nis": "777", "nama": "Murid C", "kelas": "7B"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with labkom.db() as c:
+        row = c.execute("SELECT nama,kelas FROM students WHERE nis='777'").fetchone()
+    assert row["nama"] == "Murid C"
+    assert row["kelas"] == "7B"
+
+    client.post("/admin/students/777/delete", follow_redirects=True)
+    with labkom.db() as c:
+        assert c.execute("SELECT COUNT(*) n FROM students WHERE nis='777'").fetchone()["n"] == 0
+
+
+def test_teacher_cannot_manage_students(client):
+    add_teacher("Guru A")
+    login(client, "Guru A", "teacher")
+    assert (
+        client.post(
+            "/admin/students",
+            data={"nis": "778", "nama": "Murid D", "kelas": "7C"},
+        ).status_code
+        == 403
+    )
+
+
+def test_custom_404_page(client):
+    login(client)
+    response = client.get("/halaman-tidak-ada")
+    assert response.status_code == 404
+    assert b"Halaman tidak ditemukan" in response.data
+
+
 def test_pagination(client):
     for i in range(55):
         insert_loan(nama=f"Guru {i}")

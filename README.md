@@ -22,6 +22,7 @@ Semua konfigurasi dibaca dari environment atau file `.env`:
 | Variabel | Fungsi |
 |---|---|
 | `FLASK_SECRET_KEY` | **Wajib.** Kunci session. Aplikasi menolak start jika kosong. |
+| `DATABASE_URL` | Koneksi PostgreSQL/Neon. Kosong = SQLite lokal. |
 | `ADMIN_NAME`, `ADMIN_PASSWORD` | Akun admin. Hash password diperbarui saat startup. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Notifikasi Telegram (opsional, dikirim di background). |
 | `HOST`, `PORT`, `THREADS` | Alamat dan jumlah thread Waitress. |
@@ -46,6 +47,30 @@ Semua konfigurasi dibaca dari environment atau file `.env`:
 ## Backup
 
 Tombol **Bersihkan Semua Riwayat & Foto** selalu membuat ZIP berisi `labkom.db` dan seluruh foto sebelum menghapus data. ZIP lama dipangkas sesuai `BACKUP_KEEP`. Jika `BACKUP_COPY_DIR` diisi, salinan juga dikirim ke folder tersebut. Jika `BACKUP_PASSWORD` diisi, ZIP dienkripsi AES.
+
+## Deploy ke Vercel
+
+Vercel tidak mendukung SQLite lokal secara permanen. Untuk produksi, gunakan PostgreSQL (Neon) dan set `DATABASE_URL`. Foto otomatis disimpan sebagai `BYTEA` di PostgreSQL saat `DATABASE_URL` aktif, sehingga tidak butuh Vercel Blob.
+
+```powershell
+npx vercel login
+npx vercel --prod
+```
+
+Environment yang perlu diisi di dashboard Vercel:
+
+```text
+FLASK_SECRET_KEY
+ADMIN_NAME
+ADMIN_PASSWORD
+DATABASE_URL
+COOKIE_SECURE=1
+MAX_UPLOAD_MB=4
+TELEGRAM_BOT_TOKEN (opsional)
+TELEGRAM_CHAT_ID (opsional)
+```
+
+`vercel.json` sudah mengarahkan function ke region `sin1`. File `.python-version` memakai Python 3.14 sesuai runtime Vercel saat ini.
 
 ## Test
 

@@ -1,53 +1,373 @@
-<!doctype html>
-<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sistem Peminjaman Labkom</title>
-<script src="{{ url_for('static', filename='html5-qrcode.min.js') }}"></script>
-<script src="{{ url_for('static', filename='photo-compress.js') }}"></script>
-<style>
-:root{--ink:#17233b;--blue:#2359a8;--bg:#f3f6fb;--line:#dce4ef;--green:#13795b}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);font:14px/1.5 Arial,sans-serif;color:var(--ink)}
-header{background:#172f57;color:white;padding:24px max(18px,calc((100% - 1180px)/2))}header h1{margin:0;font-size:25px}header p{margin:5px 0 0;color:#d6e3fa}
-main{max-width:1180px;margin:22px auto;padding:0 16px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px}.stat,.panel{background:white;border:1px solid var(--line);border-radius:14px;padding:18px}.stat strong{display:block;font-size:25px}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.tabs button{border:1px solid var(--line);border-radius:8px;padding:10px 14px;background:white;cursor:pointer;font-weight:bold}.tabs button.active{background:var(--blue);color:white}
-.panel h2{margin:0 0 14px;font-size:19px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.field label{display:block;font-weight:bold;margin-bottom:5px}.field input,.field select{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:white;font:inherit}.field{margin-bottom:12px}.full{grid-column:1/-1}.primary{border:0;border-radius:8px;background:var(--blue);color:white;padding:11px 16px;font-weight:bold;cursor:pointer}.secondary{border:1px solid var(--line);background:white;border-radius:8px;padding:9px 12px;cursor:pointer}.notice{padding:10px 13px;border-radius:8px;background:#e7f7ee;margin:8px 0}.notice.error{background:#fff0ef}.notice.warning{background:#fff7dd}
-.hidden{display:none!important}#reader{max-width:420px;margin:12px 0} .hint{color:#607089;font-size:12px}.studentbox{padding:12px;background:#f0f6ff;border-radius:8px;margin:10px 0;min-height:48px}
-.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:12px}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);white-space:nowrap}th{background:#f5f8fc}.status{font-weight:bold;color:var(--green)}.smallbtn{padding:6px 9px;border:0;border-radius:6px;background:#e7efff;color:#194b95;cursor:pointer}.pager{display:flex;gap:12px;align-items:center;margin-top:12px;font-size:13px}.pager a{color:var(--blue);font-weight:bold;text-decoration:none}
-@media(max-width:720px){.grid,.stats{grid-template-columns:1fr}.full{grid-column:auto}main{margin-top:12px}}
-</style></head>
-<body><header><h1>Labkom — Sistem Peminjaman</h1><p>Pencatatan peminjaman guru dan murid, pemantauan penggunaan Labkom 1 dan 2.</p><p style="margin-top:12px">Masuk sebagai: <b>{{current_user}}</b> · {% if is_admin %}Admin/PJ Labkom{% else %}Guru{% endif %} · <a href="/logout" style="color:white">Keluar</a></p></header>
-<main>
-{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="notice {{category}}">{{message}}</div>{% endfor %}{% endwith %}
-<div class="stats"><div class="stat"><span>Total data murid</span><strong>{{students_count}}</strong></div><div class="stat"><span>Peminjaman masih aktif</span><strong>{{active}}</strong></div><div class="stat"><span>Lab yang dikelola</span><strong>2</strong></div></div>
-<section class="panel" style="margin-bottom:14px"><h2>Jadwal Labkom yang Sudah Dibooking</h2><p class="hint">Jadwal aktif ditampilkan agar peminjam dapat memeriksa ketersediaan sebelum mengajukan. Sistem tetap memeriksa bentrok saat tombol simpan ditekan. Halaman ini menampilkan maksimal 100 jadwal aktif terdekat.</p><div class="tablewrap"><table><thead><tr><th>Lab</th><th>Tanggal</th><th>Waktu Mulai</th><th>Waktu Selesai</th><th>Keterangan</th></tr></thead><tbody>{% for s in schedule %}<tr><td>{{s.lab}}</td><td>{{s.tanggal}}</td><td>{{s.waktu_mulai}}</td><td>{{s.waktu_selesai}}</td><td><span class="status">Sudah dibooking</span></td></tr>{% else %}<tr><td colspan="5">Belum ada jadwal aktif.</td></tr>{% endfor %}</tbody></table></div></section>
-<section class="panel" style="margin-bottom:14px"><h2>Peminjaman Aktif — Sedang Digunakan</h2><p class="hint">Gunakan tombol Selesaikan ketika peminjam sudah selesai. Untuk murid, tanggal dan waktu mulai dicatat otomatis saat peminjaman disimpan. Waktu selesai pada baris ini merupakan estimasi; waktu aktual dicatat saat tombol ditekan.</p><div class="tablewrap"><table><thead><tr><th>Nama</th><th>Jenis</th><th>Kelas</th><th>Lab</th><th>Tanggal</th><th>Mulai</th><th>Estimasi selesai</th><th>Aksi</th></tr></thead><tbody>{% for l in active_loans %}<tr><td>{{l.nama}}</td><td>{{l.peminjam_type}}</td><td>{{l.kelas}}</td><td>{{l.lab}}</td><td>{{l.tanggal}}</td><td>{{l.waktu_mulai}}</td><td>{{l.waktu_selesai}}</td><td><a href="/return/{{l.id}}"><button type="button" class="smallbtn">Dokumentasi & Selesaikan</button></a></td></tr>{% else %}<tr><td colspan="8">Tidak ada peminjaman aktif saat ini.</td></tr>{% endfor %}</tbody></table></div></section>
-<div class="tabs"><button class="active" onclick="showTab('guru',this)">Peminjaman Guru</button><button onclick="showTab('murid',this)">Scan QR Murid</button>{% if is_admin %}<button onclick="showTab('admin',this)">Data Admin</button>{% endif %}</div>
-<section id="guru" class="panel"><h2>Form Peminjaman Guru</h2><form action="/borrow/teacher" method="post" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="grid">
-<div class="field"><label>Nama guru</label><input value="{{current_user}}" disabled><p class="hint">Nama diambil dari akun yang sedang masuk.</p></div>
-<div class="field"><label>Kelas</label><input name="kelas" required placeholder="Contoh: 9 Asiah"></div>
-<div class="field"><label>Jumlah murid</label><input name="jumlah_murid" type="number" min="0" value="0" required></div>
-<div class="field"><label>Pilih lab</label><select name="lab" required><option value="">Pilih lab</option><option>Labkom 1</option><option>Labkom 2</option></select></div>
-<div class="field"><label>Tanggal peminjaman</label><input name="tanggal" type="date" value="{{today}}" required></div>
-<div class="field"><label>Waktu mulai</label><input name="waktu_mulai" type="time" required></div>
-<div class="field"><label>Waktu selesai</label><input name="waktu_selesai" type="time" required></div>
-<div class="field full"><label>Foto kondisi awal Labkom (wajib, dari HP)</label><input name="photo_before" type="file" accept="image/*" capture="environment" required onchange="compressImage(this)"><p class="hint">Ambil foto komputer/peralatan sebelum digunakan. Jika website dibuka dari HP, pilih kamera atau foto yang sudah tersimpan.</p></div>
-<div class="field full"><button class="primary" type="submit">Simpan Peminjaman Guru</button></div></div></form></section>
-<section id="murid" class="panel hidden"><h2>Peminjaman Murid dengan QR</h2><p class="hint">Gunakan kamera komputer. Jika browser meminta izin kamera, pilih Izinkan. QR berisi NIS murid.</p>
-<button class="primary" onclick="startScanner()">Mulai Scan Kamera</button> <button class="secondary" onclick="stopScanner()">Matikan Kamera</button><div id="reader"></div>
-<form action="/borrow/student" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="nis" id="nis">
-<div class="studentbox" id="studentbox">Belum ada QR yang dipindai.</div>
-<div class="grid"><div class="field"><label>Pilih lab</label><select name="lab" required><option value="">Pilih lab</option><option>Labkom 1</option><option>Labkom 2</option></select></div>
-<div class="field"><label>Durasi peminjaman</label><select name="durasi" required><option value="30">30 menit</option><option value="60" selected>60 menit</option><option value="90">90 menit</option><option value="120">120 menit</option></select></div>
-<div class="field full"><p class="hint">Tanggal dan waktu mulai akan dicatat otomatis oleh server saat tombol simpan ditekan. Waktu selesai di atas adalah estimasi untuk pemeriksaan jadwal; waktu selesai aktual dicatat saat transaksi ditutup.</p><button class="primary" type="submit">Mulai Peminjaman Murid</button></div></div></form></section>
-{% if is_admin %}<section id="admin" class="panel hidden"><h2>Pengelolaan Akun Guru</h2><form action="/admin/teachers" method="post" class="grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="field"><label>Tambah guru / atur ulang password</label><input name="nama" required placeholder="Nama lengkap guru"><p class="hint">Masukkan nama yang sama untuk mengatur ulang password guru lama.</p></div><div class="field"><label>Password (min. 8 karakter)</label><input type="password" name="password" required minlength="8" autocomplete="new-password" placeholder="Password awal guru"></div><div class="field" style="align-self:end"><button class="primary" type="submit">Simpan Akun Guru</button></div></form><div class="tablewrap"><table><thead><tr><th>Nama guru aktif</th><th>Aksi</th></tr></thead><tbody>{% for t in teachers %}<tr><td>{{t.nama}}</td><td><form method="post" action="/admin/teachers/{{t.nama|urlencode}}/delete" onsubmit="return confirm('Nonaktifkan akun guru ini?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="smallbtn" type="submit">Nonaktifkan</button></form></td></tr>{% else %}<tr><td colspan="2">Belum ada akun guru.</td></tr>{% endfor %}</tbody></table></div><hr><h2>Log Peminjaman / Admin</h2><p class="hint">Daftar ini merupakan riwayat. Gunakan tombol Selesaikan pada bagian Peminjaman Aktif ketika pengguna benar-benar selesai. Sistem mencatat waktu aktual dan mengirim notifikasi Telegram jika sudah dikonfigurasi.</p>
-<p><a href="/export.csv"><button class="secondary">Unduh Log CSV</button></a></p><div class="tablewrap"><table><thead><tr><th>ID</th><th>Jenis</th><th>Nama</th><th>Kelas</th><th>Lab</th><th>Tanggal</th><th>Mulai</th><th>Selesai</th><th>Status</th><th>Aksi</th></tr></thead><tbody>
-{% for l in loans %}<tr><td>{{l.id}}</td><td>{{l.peminjam_type}}</td><td>{{l.nama}}</td><td>{{l.kelas}}</td><td>{{l.lab}}</td><td>{{l.tanggal}}</td><td>{{l.waktu_mulai}}</td><td>{{l.waktu_selesai}}</td><td>{{l.status}}</td><td>{% if l.status != 'Selesai' %}<a href="/return/{{l.id}}"><button type="button" class="smallbtn">Dokumentasi & Selesaikan</button></a>{% else %}✓{% endif %}</td></tr>{% endfor %}
-</tbody></table></div>{% if total_loans %}<p class="hint">Menampilkan {{first_item}}–{{last_item}} dari {{total_loans}} transaksi.</p>{% if pages > 1 %}<div class="pager">{% if page > 1 %}<a href="{{ url_for('index', page=page-1) }}">‹ Sebelumnya</a>{% endif %}<span>Halaman {{page}} dari {{pages}}</span>{% if page < pages %}<a href="{{ url_for('index', page=page+1) }}">Berikutnya ›</a>{% endif %}</div>{% endif %}{% endif %}<hr><h2>Pembersihan Data Uji Coba</h2><p class="hint">Fitur ini menghapus seluruh riwayat peminjaman guru dan murid serta foto dokumentasi. Data santri dan akun guru tidak dihapus. Sistem membuat cadangan otomatis sebelum penghapusan di folder <b>backup_labkom</b>.</p><form action="/admin/clear-loans" method="post" onsubmit="return confirmClearLoans(this)"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="field"><label>Ketik BERSIHKAN untuk konfirmasi</label><input name="confirmation" autocomplete="off" required placeholder="BERSIHKAN"></div><button type="submit" style="border:0;border-radius:8px;background:#b42318;color:white;padding:11px 16px;font-weight:bold;cursor:pointer">Bersihkan Semua Riwayat & Foto</button></form></section>{% endif %}
-<p class="hint">Akses guru dibatasi pada transaksi yang dibuat dari akun masing-masing. Admin dapat melihat seluruh riwayat dan mengelola akun guru.</p>
-</main>
-<script>
-let scanner=null, scanBusy=false;
-function showTab(id,btn){['guru','murid','admin'].forEach(x=>{const el=document.getElementById(x);if(el)el.classList.toggle('hidden',x!==id);});document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));btn.classList.add('active');if(id!=='murid')stopScanner();}
-async function startScanner(){if(!window.Html5Qrcode){alert('Pustaka scanner tidak termuat. Pastikan komputer terhubung ke internet.');return;}try{if(!scanner)scanner=new Html5Qrcode('reader');await scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:240,height:240}},async decoded=>{if(scanBusy)return;scanBusy=true;let nis=decoded.trim();try{let r=await fetch('/api/student/'+encodeURIComponent(nis));let data=await r.json();if(!r.ok)throw Error(data.error||'NIS tidak ditemukan');document.getElementById('nis').value=data.nis;document.getElementById('studentbox').innerHTML='<b>'+escapeHtml(data.nama)+'</b><br>Kelas: '+escapeHtml(data.kelas)+'<br>NIS: '+escapeHtml(data.nis);await stopScanner();}catch(e){document.getElementById('studentbox').textContent='QR terbaca, tetapi '+e.message+'. Pastikan QR berasal dari daftar murid.';}finally{scanBusy=false;}},()=>{});}catch(e){alert('Kamera tidak dapat dibuka. Beri izin kamera dan buka web melalui localhost atau HTTPS. Detail: '+e);}}
-async function stopScanner(){if(scanner){try{if(scanner.isScanning)await scanner.stop();}catch(e){}}}
-function confirmClearLoans(form){if(form.confirmation.value.trim()!=='BERSIHKAN'){alert('Ketik BERSIHKAN dengan benar.');return false;}return confirm('PERINGATAN: Semua riwayat peminjaman dan foto dokumentasi akan dihapus. Data santri dan akun guru tetap ada. Lanjutkan?');}
-function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-</script></body></html>
+{% extends "app_base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Dashboard — Labkom{% endblock %}
+{% block content %}
+<section id="view-dashboard" class="view active">
+  <div class="page-head">
+    <div>
+      <p class="eyebrow">Ringkasan</p>
+      <h1>Selamat datang, {{ current_user }}</h1>
+      <p class="muted">Pantau penggunaan Labkom 1 dan 2, ajukan peminjaman, dan selesaikan dokumentasi dari satu tempat.</p>
+    </div>
+    <div class="page-actions">
+      <button type="button" class="btn btn-primary" onclick="goView('guru')">{{ icon('plus') }} Peminjaman Baru</button>
+      <button type="button" class="btn btn-ghost" onclick="goView('murid')">{{ icon('qr') }} Scan QR</button>
+    </div>
+  </div>
+  <div class="stats">
+    <article class="stat-card">
+      <span class="stat-icon indigo">{{ icon('users', 20) }}</span>
+      <div><strong>{{ students_count }}</strong><span>Total data murid</span></div>
+    </article>
+    <article class="stat-card">
+      <span class="stat-icon amber">{{ icon('clock', 20) }}</span>
+      <div><strong>{{ active }}</strong><span>Peminjaman aktif</span></div>
+    </article>
+    <article class="stat-card">
+      <span class="stat-icon teal">{{ icon('book', 20) }}</span>
+      <div><strong>2</strong><span>Lab yang dikelola</span></div>
+    </article>
+  </div>
+
+  <div class="dashboard-grid">
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2>Peminjaman Aktif</h2>
+          <p class="muted">Transaksi yang sedang berjalan saat ini.</p>
+        </div>
+        <span class="badge badge-warning">{{ active }} aktif</span>
+      </div>
+      <div class="loan-list">
+        {% for l in active_loans %}
+        <article class="loan-item">
+          <span class="loan-avatar">{{ l.nama[:1]|upper }}</span>
+          <div class="loan-main">
+            <strong>{{ l.nama }}</strong>
+            <span>{{ l.peminjam_type }} · {{ l.kelas or 'Tanpa kelas' }}</span>
+          </div>
+          <div class="loan-meta">
+            <span class="badge">{{ l.lab }}</span>
+            <span class="muted">{{ l.waktu_mulai }}–{{ l.waktu_selesai }}</span>
+          </div>
+          <a class="btn btn-sm btn-primary" href="{{ url_for('return_loan', loan_id=l.id) }}">{{ icon('camera', 15) }} Selesaikan</a>
+        </article>
+        {% else %}
+        <div class="empty-state">
+          {{ icon('clock', 28) }}
+          <strong>Belum ada peminjaman aktif</strong>
+          <span>Peminjaman yang sedang berjalan akan muncul di sini.</span>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2>Jadwal Terdekat</h2>
+          <p class="muted">Maksimal 100 jadwal aktif terdekat.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Lab</th><th>Tanggal</th><th>Waktu</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for s in schedule %}
+            <tr>
+              <td><span class="badge">{{ s.lab }}</span></td>
+              <td>{{ s.tanggal }}</td>
+              <td>{{ s.waktu_mulai }}–{{ s.waktu_selesai }}</td>
+              <td><span class="badge badge-warning">Dibooking</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4"><div class="empty-inline">Belum ada jadwal aktif.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</section>
+
+<section id="view-guru" class="view">
+  <div class="page-head compact">
+    <div>
+      <p class="eyebrow">Formulir</p>
+      <h1>Peminjaman Guru</h1>
+      <p class="muted">Ajukan penggunaan Labkom untuk kelas Anda. Foto kondisi awal wajib diunggah.</p>
+    </div>
+  </div>
+  <section class="card form-card">
+    <form action="{{ url_for('borrow_teacher') }}" method="post" enctype="multipart/form-data" data-once>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-grid">
+        <div class="field">
+          <label for="guru-nama">Nama guru</label>
+          <input id="guru-nama" value="{{ current_user }}" disabled>
+          <p class="hint">Nama diambil dari akun yang sedang masuk.</p>
+        </div>
+        <div class="field">
+          <label for="guru-kelas">Kelas <span class="required">*</span></label>
+          <input id="guru-kelas" name="kelas" required placeholder="Contoh: 9 Asiah" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="guru-jumlah">Jumlah murid <span class="required">*</span></label>
+          <input id="guru-jumlah" name="jumlah_murid" type="number" min="0" value="0" required>
+        </div>
+        <div class="field">
+          <label for="guru-lab">Pilih lab <span class="required">*</span></label>
+          <select id="guru-lab" name="lab" required>
+            <option value="">Pilih lab</option>
+            <option>Labkom 1</option>
+            <option>Labkom 2</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="guru-tanggal">Tanggal peminjaman <span class="required">*</span></label>
+          <input id="guru-tanggal" name="tanggal" type="date" value="{{ today }}" required>
+        </div>
+        <div class="field">
+          <label for="guru-mulai">Waktu mulai <span class="required">*</span></label>
+          <input id="guru-mulai" name="waktu_mulai" type="time" required>
+        </div>
+        <div class="field">
+          <label for="guru-selesai">Waktu selesai <span class="required">*</span></label>
+          <input id="guru-selesai" name="waktu_selesai" type="time" required>
+        </div>
+        <div class="field full">
+          <label for="guru-foto">Foto kondisi awal Labkom <span class="required">*</span></label>
+          <input id="guru-foto" name="photo_before" type="file" accept="image/*" capture="environment" required onchange="compressImage(this)">
+          <p class="hint">Ambil foto komputer/peralatan sebelum digunakan. Foto akan dikecilkan otomatis sebelum diunggah.</p>
+        </div>
+        <div class="field full form-actions">
+          <button class="btn btn-primary" type="submit">{{ icon('check') }} Simpan Peminjaman</button>
+        </div>
+      </div>
+    </form>
+  </section>
+</section>
+
+<section id="view-murid" class="view">
+  <div class="page-head compact">
+    <div>
+      <p class="eyebrow">Scan QR</p>
+      <h1>Peminjaman Murid</h1>
+      <p class="muted">Pindai QR berisi NIS murid menggunakan kamera, lalu pilih lab dan durasi.</p>
+    </div>
+  </div>
+  <div class="scanner-grid">
+    <section class="card scanner-card">
+      <div class="card-head">
+        <div><h2>Kamera Scanner</h2><p class="muted">Arahkan QR ke kamera.</p></div>
+      </div>
+      <div id="reader" class="reader"></div>
+      <div class="scanner-actions">
+        <button class="btn btn-primary" type="button" onclick="startScanner()">{{ icon('camera') }} Mulai Scan</button>
+        <button class="btn btn-ghost" type="button" onclick="stopScanner()">Matikan Kamera</button>
+      </div>
+      <p class="hint">Jika browser meminta izin kamera, pilih Izinkan. Kamera memerlukan HTTPS atau localhost.</p>
+    </section>
+
+    <section class="card form-card">
+      <div class="card-head">
+        <div><h2>Data Peminjaman</h2><p class="muted">Lengkapi setelah QR terbaca.</p></div>
+      </div>
+      <form action="{{ url_for('borrow_student') }}" method="post" data-once>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="nis" id="nis">
+        <div class="studentbox" id="studentbox">Belum ada QR yang dipindai.</div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="murid-lab">Pilih lab <span class="required">*</span></label>
+            <select id="murid-lab" name="lab" required>
+              <option value="">Pilih lab</option>
+              <option>Labkom 1</option>
+              <option>Labkom 2</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="murid-durasi">Durasi <span class="required">*</span></label>
+            <select id="murid-durasi" name="durasi" required>
+              <option value="30">30 menit</option>
+              <option value="60" selected>60 menit</option>
+              <option value="90">90 menit</option>
+              <option value="120">120 menit</option>
+            </select>
+          </div>
+          <div class="field full form-actions">
+            <button class="btn btn-primary" type="submit">{{ icon('check') }} Mulai Peminjaman</button>
+          </div>
+        </div>
+        <p class="hint">Tanggal dan waktu mulai dicatat otomatis oleh server saat tombol simpan ditekan.</p>
+      </form>
+    </section>
+  </div>
+</section>
+
+<section id="view-riwayat" class="view">
+  <div class="page-head compact">
+    <div>
+      <p class="eyebrow">Riwayat</p>
+      <h1>Riwayat Peminjaman</h1>
+      <p class="muted">Cari transaksi berdasarkan nama, kelas, lab, atau status.</p>
+    </div>
+    <div class="search-box">
+      {{ icon('search', 16) }}
+      <input type="search" placeholder="Cari riwayat..." oninput="filterTable(this, 'historyTable')" aria-label="Cari riwayat">
+    </div>
+  </div>
+  <section class="card">
+    <div class="table-wrap">
+      <table id="historyTable">
+        <thead><tr><th>Peminjam</th><th>Jenis</th><th>Lab</th><th>Jadwal</th><th>Status</th><th>Aksi</th></tr></thead>
+        <tbody>
+          {% for l in loans %}
+          <tr data-search="{{ (l.nama ~ ' ' ~ l.kelas ~ ' ' ~ l.lab ~ ' ' ~ l.status ~ ' ' ~ l.peminjam_type)|lower }}">
+            <td>
+              <div class="person-cell">
+                <span class="mini-avatar">{{ l.nama[:1]|upper }}</span>
+                <span><strong>{{ l.nama }}</strong><small>{{ l.kelas or 'Tanpa kelas' }}{% if l.nis %} · NIS {{ l.nis }}{% endif %}</small></span>
+              </div>
+            </td>
+            <td>{{ l.peminjam_type }}</td>
+            <td><span class="badge">{{ l.lab }}</span></td>
+            <td><strong>{{ l.tanggal }}</strong><small class="muted">{{ l.waktu_mulai }}–{{ l.waktu_selesai }}</small></td>
+            <td>
+              {% if l.status == 'Selesai' %}
+              <span class="badge badge-success">Selesai</span>
+              {% else %}
+              <span class="badge badge-warning">Dipinjam</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if l.status != 'Selesai' %}
+              <a class="btn btn-sm btn-ghost" href="{{ url_for('return_loan', loan_id=l.id) }}">{{ icon('camera', 14) }} Selesaikan</a>
+              {% else %}
+              <span class="muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6"><div class="empty-inline">Belum ada riwayat peminjaman.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if total_loans %}
+    <div class="pagination">
+      <span class="muted">Menampilkan {{ first_item }}–{{ last_item }} dari {{ total_loans }} transaksi</span>
+      <div class="pager">
+        {% if page > 1 %}<a class="btn btn-sm btn-ghost" href="{{ url_for('index', page=page-1) }}#riwayat">{{ icon('chevron-left', 14) }} Sebelumnya</a>{% endif %}
+        <span>Halaman {{ page }} dari {{ pages }}</span>
+        {% if page < pages %}<a class="btn btn-sm btn-ghost" href="{{ url_for('index', page=page+1) }}#riwayat">Berikutnya {{ icon('chevron-right', 14) }}</a>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </section>
+</section>
+
+{% if is_admin %}
+<section id="view-admin" class="view">
+  <div class="page-head compact">
+    <div>
+      <p class="eyebrow">Manajemen</p>
+      <h1>Data & Pengaturan</h1>
+      <p class="muted">Kelola akun guru, data murid, ekspor riwayat, dan pembersihan data uji coba.</p>
+    </div>
+  </div>
+
+  <div class="admin-grid">
+    <section class="card">
+      <div class="card-head">
+        <div><h2>Akun Guru</h2><p class="muted">Tambah guru baru atau atur ulang password.</p></div>
+        <span class="badge">{{ teachers|length }} aktif</span>
+      </div>
+      <form action="{{ url_for('manage_teachers') }}" method="post" class="inline-form" data-once>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field"><label for="guru-baru">Nama guru</label><input id="guru-baru" name="nama" required placeholder="Nama lengkap guru"></div>
+        <div class="field"><label for="guru-password">Password</label><input id="guru-password" type="password" name="password" required minlength="8" autocomplete="new-password" placeholder="Min. 8 karakter"></div>
+        <button class="btn btn-primary" type="submit">{{ icon('user-plus') }} Simpan</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Nama guru aktif</th><th>Aksi</th></tr></thead>
+          <tbody>
+            {% for t in teachers %}
+            <tr>
+              <td><div class="person-cell"><span class="mini-avatar">{{ t.nama[:1]|upper }}</span><strong>{{ t.nama }}</strong></div></td>
+              <td>
+                <form method="post" action="{{ url_for('delete_teacher', name=t.nama) }}" onsubmit="return confirm('Nonaktifkan akun guru ini?')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-danger" type="submit">{{ icon('trash', 14) }} Nonaktifkan</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="2"><div class="empty-inline">Belum ada akun guru.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="hint">Masukkan nama yang sama untuk mengatur ulang password guru lama.</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div><h2>Data Murid</h2><p class="muted">Data ini dipakai untuk validasi QR/NIS.</p></div>
+        <span class="badge">{{ students|length }} murid</span>
+      </div>
+      <form action="{{ url_for('manage_students') }}" method="post" class="inline-form" data-once>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field"><label for="murid-nis">NIS</label><input id="murid-nis" name="nis" required placeholder="NIS murid" autocomplete="off"></div>
+        <div class="field"><label for="murid-nama">Nama</label><input id="murid-nama" name="nama" required placeholder="Nama lengkap" autocomplete="off"></div>
+        <div class="field"><label for="murid-kelas">Kelas</label><input id="murid-kelas" name="kelas" required placeholder="Contoh: 7A" autocomplete="off"></div>
+        <button class="btn btn-primary" type="submit">{{ icon('user-plus') }} Simpan</button>
+      </form>
+      <div class="table-wrap table-tall">
+        <table>
+          <thead><tr><th>NIS</th><th>Nama</th><th>Kelas</th><th>Aksi</th></tr></thead>
+          <tbody>
+            {% for s in students %}
+            <tr>
+              <td><code>{{ s.nis }}</code></td>
+              <td>{{ s.nama }}</td>
+              <td><span class="badge">{{ s.kelas }}</span></td>
+              <td>
+                <form method="post" action="{{ url_for('delete_student', nis=s.nis) }}" onsubmit="return confirm('Hapus data murid ini?')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-danger" type="submit">{{ icon('trash', 14) }} Hapus</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4"><div class="empty-inline">Belum ada data murid. Tambahkan atau impor students.json.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <section class="card tools-card">
+    <div class="card-head">
+      <div><h2>Data & Pemeliharaan</h2><p class="muted">Ekspor riwayat atau bersihkan data uji coba dengan aman.</p></div>
+    </div>
+    <div class="tool-row">
+      <div><strong>Ekspor CSV</strong><p class="muted">Unduh seluruh riwayat peminjaman dalam format CSV.</p></div>
+      <a class="btn btn-ghost" href="{{ url_for('export_csv') }}">{{ icon('download') }} Unduh CSV</a>
+    </div>
+    <div class="tool-row danger-zone">
+      <div><strong>Bersihkan data uji coba</strong><p class="muted">Menghapus riwayat dan foto. Sistem membuat backup terlebih dahulu.</p></div>
+      <form action="{{ url_for('clear_all_loans') }}" method="post" onsubmit="return confirmClearLoans(this)">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="inline-confirm">
+          <input name="confirmation" autocomplete="off" required placeholder="Ketik BERSIHKAN">
+          <button class="btn btn-danger" type="submit">{{ icon('trash') }} Bersihkan</button>
+        </div>
+      </form>
+    </div>
+  </section>
+</section>
+{% endif %}
+{% endblock %}

@@ -1,3 +1,59 @@
-<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Masuk — Labkom</title><style>
-*{box-sizing:border-box}body{margin:0;background:#f3f6fb;color:#17233b;font:15px/1.5 Arial,sans-serif;display:grid;min-height:100vh;place-items:center;padding:18px}.card{width:100%;max-width:440px;background:white;border:1px solid #dce4ef;border-radius:16px;padding:26px;box-shadow:0 10px 30px #17233b0d}h1{font-size:24px;margin:0 0 6px}.muted{color:#64748b;font-size:13px}.field{margin:18px 0}.field label{display:block;font-weight:bold;margin-bottom:7px}.field select,.field input{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:9px;font:inherit;background:white}.btn{width:100%;border:0;border-radius:9px;background:#2359a8;color:white;padding:12px;font-weight:bold;font-size:15px;cursor:pointer}.notice{padding:10px;border-radius:8px;background:#fff0ef;margin:12px 0}.warning{margin-top:18px;padding:12px;border-radius:9px;background:#fff7dd;color:#72520a;font-size:12px}
-</style></head><body><main class="card"><h1>Labkom — Sistem Peminjaman</h1><p class="muted">Silakan pilih nama untuk masuk ke sistem.</p>{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="notice">{{message}}</div>{% endfor %}{% endwith %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="field"><label>Nama pengguna</label><select name="nama" required><option value="">Pilih nama</option><option value="{{admin_name}}">{{admin_name}} — Admin/PJ Labkom</option>{% for t in teachers %}<option value="{{t.nama}}">{{t.nama}} — Guru</option>{% endfor %}</select></div><div class="field"><label>Password</label><input type="password" name="password" required autocomplete="current-password" placeholder="Password akun"></div><button class="btn" type="submit">Masuk</button></form><div class="warning"><b>Catatan keamanan:</b> Jangan bagikan password akun. Untuk akses dari internet, gunakan HTTPS dan set <b>COOKIE_SECURE=1</b>.</div></main></body></html>
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Masuk — Labkom{% endblock %}
+{% block body_class %}auth-body{% endblock %}
+{% block body %}
+<main class="auth-shell">
+  <section class="auth-aside">
+    <a class="brand brand-light" href="{{ url_for('login') }}">
+      <span class="brand-mark">{{ icon('book', 22) }}</span>
+      <span><strong>Labkom</strong><small>SMK IT JLC 2</small></span>
+    </a>
+    <div class="auth-copy">
+      <p class="eyebrow light">Sistem Peminjaman</p>
+      <h1>Kelola Labkom dengan lebih rapi dan cepat.</h1>
+      <p>Catat peminjaman guru dan murid, pindai QR, dokumentasikan kondisi lab, dan pantau penggunaan dari satu dashboard.</p>
+      <ul class="feature-list">
+        <li>{{ icon('qr', 18) }} Scan QR murid dengan kamera</li>
+        <li>{{ icon('camera', 18) }} Dokumentasi foto kondisi lab</li>
+        <li>{{ icon('shield', 18) }} Akses akun dengan password</li>
+      </ul>
+    </div>
+    <p class="auth-foot">Labkom SMK IT JLC 2 · Sistem internal sekolah</p>
+  </section>
+
+  <section class="auth-panel">
+    <div class="auth-card">
+      <div class="auth-card-head">
+        <span class="auth-icon">{{ icon('shield', 22) }}</span>
+        <div>
+          <h2>Masuk ke akun</h2>
+          <p class="muted">Pilih nama akun dan masukkan password.</p>
+        </div>
+      </div>
+
+      <form method="post" data-once>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field">
+          <label for="login-nama">Nama pengguna</label>
+          <select id="login-nama" name="nama" required autocomplete="username">
+            <option value="">Pilih nama</option>
+            <option value="{{ admin_name }}">{{ admin_name }} — Admin/PJ Labkom</option>
+            {% for t in teachers %}<option value="{{ t.nama }}">{{ t.nama }} — Guru</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <div class="password-wrap">
+            <input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="Masukkan password">
+            <button type="button" class="password-toggle" onclick="togglePassword('login-password', this)" aria-label="Tampilkan password">Lihat</button>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit">Masuk {{ icon('chevron-right', 16) }}</button>
+      </form>
+
+      <p class="auth-note">{{ icon('alert', 14) }} Jangan bagikan password akun. Hubungi Admin jika lupa password.</p>
+    </div>
+  </section>
+</main>
+{% endblock %}
