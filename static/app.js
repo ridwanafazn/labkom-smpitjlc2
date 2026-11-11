@@ -53,15 +53,21 @@ function escapeHtml(value) {
   }[char]));
 }
 
+function setScannerStatus(message) {
+  const status = document.getElementById("scannerStatus");
+  if (status) status.textContent = message;
+}
+
 async function startScanner() {
   if (!window.Html5Qrcode) {
-    alert("Pustaka scanner tidak termuat.");
+    setScannerStatus("Pustaka scanner tidak termuat. Muat ulang halaman.");
     return;
   }
+  setScannerStatus("Membuka kamera...");
   try {
     if (!scanner) scanner = new Html5Qrcode("reader");
     await scanner.start(
-      { facingMode: "environment" },
+      { facingMode: { ideal: "environment" } },
       { fps: 10, qrbox: { width: 240, height: 240 } },
       async (decoded) => {
         if (scanBusy) return;
@@ -75,6 +81,7 @@ async function startScanner() {
           document.getElementById("studentbox").innerHTML =
             "<b>" + escapeHtml(data.nama) + "</b>Kelas: " + escapeHtml(data.kelas) +
             "<br>NIS: " + escapeHtml(data.nis);
+          setScannerStatus("QR terbaca.");
           await stopScanner();
         } catch (error) {
           document.getElementById("studentbox").textContent =
@@ -85,8 +92,21 @@ async function startScanner() {
       },
       () => {}
     );
+    setScannerStatus("Kamera aktif. Arahkan QR ke kamera.");
   } catch (error) {
-    alert("Kamera tidak dapat dibuka. Beri izin kamera dan buka web melalui localhost atau HTTPS.");
+    const name = error && error.name ? error.name : "";
+    if (name === "NotAllowedError") {
+      setScannerStatus("Izin kamera ditolak. Aktifkan izin kamera di browser.");
+    } else if (name === "NotFoundError") {
+      setScannerStatus("Kamera tidak ditemukan.");
+    } else if (name === "NotReadableError") {
+      setScannerStatus("Kamera sedang dipakai aplikasi lain.");
+    } else if (name === "OverconstrainedError") {
+      setScannerStatus("Kamera tidak mendukung mode yang diminta.");
+    } else {
+      setScannerStatus("Kamera tidak dapat dibuka. Gunakan localhost atau HTTPS.");
+    }
+    scanner = null;
   }
 }
 
@@ -98,6 +118,7 @@ async function stopScanner() {
       // abaikan
     }
   }
+  setScannerStatus("Kamera dimatikan.");
 }
 
 function confirmClearLoans(form) {
