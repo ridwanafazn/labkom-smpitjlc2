@@ -1,59 +1,40 @@
 {% extends "base.html" %}
-{% from "_icons.html" import icon %}
 {% block body_class %}app-body{% endblock %}
 {% block body %}
-<div class="app-shell">
+<div class="app">
   <aside class="sidebar" id="sidebar">
-    <a class="brand" href="{{ url_for('index') }}">
-      <span class="brand-mark">{{ icon('book', 22) }}</span>
-      <span><strong>Labkom</strong><small>Sistem Peminjaman</small></span>
-    </a>
-
+    <div class="brand">
+      <strong>Labkom</strong>
+      <span>SMK IT JLC 2</span>
+    </div>
     <nav class="nav" aria-label="Navigasi utama">
-      <button type="button" class="nav-item active" data-view="dashboard" onclick="showView('dashboard', this)">
-        {{ icon('grid') }}<span>Dashboard</span>
-      </button>
-      <button type="button" class="nav-item" data-view="guru" onclick="showView('guru', this)">
-        {{ icon('plus') }}<span>Peminjaman Guru</span>
-      </button>
-      <button type="button" class="nav-item" data-view="murid" onclick="showView('murid', this)">
-        {{ icon('qr') }}<span>Scan QR Murid</span>
-      </button>
-      <button type="button" class="nav-item" data-view="riwayat" onclick="showView('riwayat', this)">
-        {{ icon('history') }}<span>Riwayat</span>
-      </button>
+      <button type="button" class="nav-item active" data-view="dashboard" onclick="showView('dashboard', this)">Dashboard</button>
+      <button type="button" class="nav-item" data-view="guru" onclick="showView('guru', this)">Peminjaman guru</button>
+      <button type="button" class="nav-item" data-view="murid" onclick="showView('murid', this)">Scan QR murid</button>
+      <button type="button" class="nav-item" data-view="riwayat" onclick="showView('riwayat', this)">Riwayat</button>
       {% if is_admin %}
-      <button type="button" class="nav-item" data-view="admin" onclick="showView('admin', this)">
-        {{ icon('users') }}<span>Manajemen</span>
-      </button>
+      <button type="button" class="nav-item" data-view="admin" onclick="showView('admin', this)">Manajemen</button>
       {% endif %}
     </nav>
-
     <div class="sidebar-foot">
-      <div class="user-chip">
-        <span class="avatar">{{ current_user[:1]|upper }}</span>
-        <span class="user-meta">
-          <strong>{{ current_user }}</strong>
-          <small>{{ 'Admin / PJ Labkom' if is_admin else 'Guru' }}</small>
-        </span>
+      <div class="user">
+        <strong>{{ current_user }}</strong>
+        <span>{{ 'Admin Labkom' if is_admin else 'Guru' }}</span>
       </div>
-      <a class="logout-link" href="{{ url_for('logout') }}">{{ icon('logout', 16) }} Keluar</a>
+      <a href="{{ url_for('logout') }}">Keluar</a>
     </div>
   </aside>
 
-  <div class="main-shell">
-    <header class="topbar">
-      <button type="button" class="icon-btn menu-btn" onclick="toggleSidebar()" aria-label="Buka menu">
-        {{ icon('menu', 20) }}
-      </button>
-      <span class="topbar-brand">Labkom <span>SMK IT JLC 2</span></span>
-      <span class="status-pill"><span class="dot"></span> Sistem aktif</span>
+  <div class="main">
+    <header class="mobile-head">
+      <button type="button" class="menu-button" onclick="toggleSidebar()">Menu</button>
+      <strong>Labkom</strong>
     </header>
-
     <main class="content">
+      {% include "_notices.html" %}
       {% block content %}{% endblock %}
     </main>
   </div>
 </div>
-<div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
+<div class="backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
 {% endblock %}

@@ -2,10 +2,10 @@ PEMBARUAN DOKUMENTASI FOTO LABKOM
 
 FITUR
 1. Guru wajib mengunggah foto kondisi awal saat mengajukan peminjaman. Foto dapat diambil langsung melalui HP jika halaman dibuka dari HP, atau memilih foto yang tersimpan.
-2. Saat selesai, guru membuka tautan "Dokumentasi & Selesaikan" dari HP dan mengunggah foto kondisi akhir.
+2. Saat selesai, guru membuka tautan Dokumentasi dan Selesaikan dari HP dan mengunggah foto kondisi akhir.
 3. Saat peminjaman murid selesai, petugas membuka tautan yang sama di komputer Labkom, mengaktifkan webcam, mengambil foto kondisi akhir, lalu menyelesaikan transaksi.
-4. Sistem mencatat foto kondisi awal/akhir dan waktu selesai aktual. Jika Telegram dikonfigurasi, sistem mengirim pesan serta foto kondisi awal dan akhir yang tersedia.
-5. Pengecekan bentrok, QR/NIS, daftar peminjaman aktif, dan riwayat tetap dipertahankan.
+4. Sistem mencatat foto kondisi awal dan akhir serta waktu selesai aktual. Jika Telegram dikonfigurasi, sistem mengirim pesan dan foto yang tersedia.
+5. Pengecekan bentrok, QR dan NIS, daftar peminjaman aktif, dan riwayat tetap dipertahankan.
 
 CARA MEMASANG
 1. Simpan salinan folder aplikasi saat ini sebagai cadangan.
@@ -14,23 +14,23 @@ CARA MEMASANG
 4. Salin app.py ke folder aplikasi, lalu timpa app.py yang lama.
 5. Salin folder templates dari ZIP ke folder aplikasi dan timpa file yang sama. File templates/return.html adalah halaman baru.
 6. JANGAN menghapus atau mengganti labkom.db, students.json, folder QR, atau data lain yang sudah ada. Saat aplikasi dijalankan, kolom foto akan ditambahkan otomatis tanpa menghapus transaksi lama.
-7. Pasang dependensi: python -m pip install -r requirements.txt
+7. Pasang dependensi dengan perintah python -m pip install -r requirements.txt
 8. Salin .env.example menjadi .env, lalu isi FLASK_SECRET_KEY dan ADMIN_PASSWORD.
-9. Jalankan kembali dari folder aplikasi: python app.py
-10. Jika memakai CMD baru, isi kembali TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID seperti sebelumnya sebelum menjalankan aplikasi.
+9. Jalankan kembali dari folder aplikasi dengan perintah python app.py
+10. Jika memakai CMD baru, isi kembali TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID sebelum menjalankan aplikasi.
 
 PENTING UNTUK AKSES HP GURU
 - HP guru dan komputer server harus terhubung ke jaringan sekolah yang sama.
-- Guru harus membuka website memakai alamat IP lokal komputer server, misalnya http://192.168.x.x:5000 (gunakan IP sebenarnya dari komputer server, bukan contoh ini).
+- Guru harus membuka website memakai alamat IP lokal komputer server, misalnya http://192.168.x.x:5000. Gunakan IP sebenarnya dari komputer server.
 - Jika tidak dapat dibuka, periksa Windows Firewall untuk mengizinkan Python pada jaringan sekolah.
-- Upload foto melalui pemilih file/kamera HP biasanya tidak memerlukan akses webcam browser. Fitur webcam untuk foto penyelesaian murid harus dijalankan pada komputer server melalui localhost, atau pada HTTPS jika nanti dipasang secara aman di jaringan.
+- Upload foto melalui pemilih file atau kamera HP biasanya tidak memerlukan akses webcam browser. Fitur webcam untuk foto penyelesaian murid harus dijalankan pada komputer server melalui localhost, atau melalui HTTPS jika sudah dipasang dengan aman.
 
 PENGUJIAN
-A. Guru: buka website dari HP -> ajukan peminjaman dengan foto awal -> pastikan transaksi muncul di daftar aktif -> buka tautan Dokumentasi & Selesaikan -> unggah foto akhir -> selesaikan -> periksa Telegram dan riwayat.
-B. Murid: di komputer Labkom, scan QR dan mulai peminjaman -> buka Dokumentasi & Selesaikan -> aktifkan webcam -> ambil foto -> simpan dan selesaikan.
+A. Guru: buka website dari HP, ajukan peminjaman dengan foto awal, pastikan transaksi muncul di daftar aktif, buka tautan Dokumentasi dan Selesaikan, unggah foto akhir, selesaikan, lalu periksa Telegram dan riwayat.
+B. Murid: di komputer Labkom, scan QR dan mulai peminjaman, buka Dokumentasi dan Selesaikan, aktifkan webcam, ambil foto, lalu simpan dan selesaikan.
 C. Pastikan transaksi bentrok tetap ditolak.
 
 CATATAN
-- Login sudah memakai password. Password admin diatur lewat ADMIN_PASSWORD di file .env; password guru diatur lewat menu Data Admin. Akun guru lama harus diatur ulang passwordnya. Gunakan HTTPS dan set COOKIE_SECURE=1 untuk akses internet publik.
+- Login sudah memakai password. Password admin diatur lewat ADMIN_PASSWORD di file .env. Password guru diatur lewat menu Manajemen. Akun guru lama harus diatur ulang passwordnya. Gunakan HTTPS dan set COOKIE_SECURE=1 untuk akses internet publik.
 - Foto disimpan di folder uploads_labkom pada komputer server. Jangan menghapus folder ini jika foto riwayat masih diperlukan.
-- Jika Telegram belum dikonfigurasi atau pengiriman gagal, transaksi tetap tersimpan tetapi notifikasi/foto Telegram mungkin tidak terkirim.
+- Jika Telegram belum dikonfigurasi atau pengiriman gagal, transaksi tetap tersimpan tetapi notifikasi atau foto Telegram mungkin tidak terkirim.

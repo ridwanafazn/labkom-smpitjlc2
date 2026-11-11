@@ -1,0 +1,12 @@
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="notices">
+  {% for category, message in messages %}
+  <div class="notice notice-{{ category }}">
+    <span>{{ message }}</span>
+    <button type="button" class="notice-close" onclick="this.parentElement.remove()">Tutup</button>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endwith %}

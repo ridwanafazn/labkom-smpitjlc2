@@ -1,122 +1,105 @@
 {% extends "app_base.html" %}
-{% from "_icons.html" import icon %}
-{% block title %}Dashboard — Labkom{% endblock %}
+{% block title %}Dashboard - Labkom{% endblock %}
 {% block content %}
 <section id="view-dashboard" class="view active">
   <div class="page-head">
     <div>
-      <p class="eyebrow">Ringkasan</p>
-      <h1>Selamat datang, {{ current_user }}</h1>
-      <p class="muted">Pantau penggunaan Labkom 1 dan 2, ajukan peminjaman, dan selesaikan dokumentasi dari satu tempat.</p>
+      <h1>Dashboard</h1>
+      <p>Data peminjaman Labkom 1 dan 2.</p>
     </div>
     <div class="page-actions">
-      <button type="button" class="btn btn-primary" onclick="goView('guru')">{{ icon('plus') }} Peminjaman Baru</button>
-      <button type="button" class="btn btn-ghost" onclick="goView('murid')">{{ icon('qr') }} Scan QR</button>
+      <button type="button" class="btn btn-primary" onclick="goView('guru')">Ajukan peminjaman</button>
+      <button type="button" class="btn btn-secondary" onclick="goView('murid')">Scan QR</button>
     </div>
   </div>
+
   <div class="stats">
-    <article class="stat-card">
-      <span class="stat-icon indigo">{{ icon('users', 20) }}</span>
-      <div><strong>{{ students_count }}</strong><span>Total data murid</span></div>
-    </article>
-    <article class="stat-card">
-      <span class="stat-icon amber">{{ icon('clock', 20) }}</span>
-      <div><strong>{{ active }}</strong><span>Peminjaman aktif</span></div>
-    </article>
-    <article class="stat-card">
-      <span class="stat-icon teal">{{ icon('book', 20) }}</span>
-      <div><strong>2</strong><span>Lab yang dikelola</span></div>
-    </article>
+    <div class="stat"><strong>{{ students_count }}</strong><span>Murid terdaftar</span></div>
+    <div class="stat"><strong>{{ active }}</strong><span>Peminjaman aktif</span></div>
+    <div class="stat"><strong>2</strong><span>Lab</span></div>
   </div>
 
-  <div class="dashboard-grid">
-    <section class="card">
-      <div class="card-head">
-        <div>
-          <h2>Peminjaman Aktif</h2>
-          <p class="muted">Transaksi yang sedang berjalan saat ini.</p>
-        </div>
-        <span class="badge badge-warning">{{ active }} aktif</span>
+  <section class="section">
+    <div class="section-head">
+      <div>
+        <h2>Peminjaman aktif</h2>
+        <p>Transaksi yang belum selesai.</p>
       </div>
-      <div class="loan-list">
-        {% for l in active_loans %}
-        <article class="loan-item">
-          <span class="loan-avatar">{{ l.nama[:1]|upper }}</span>
-          <div class="loan-main">
-            <strong>{{ l.nama }}</strong>
-            <span>{{ l.peminjam_type }} · {{ l.kelas or 'Tanpa kelas' }}</span>
-          </div>
-          <div class="loan-meta">
-            <span class="badge">{{ l.lab }}</span>
-            <span class="muted">{{ l.waktu_mulai }}–{{ l.waktu_selesai }}</span>
-          </div>
-          <a class="btn btn-sm btn-primary" href="{{ url_for('return_loan', loan_id=l.id) }}">{{ icon('camera', 15) }} Selesaikan</a>
-        </article>
-        {% else %}
-        <div class="empty-state">
-          {{ icon('clock', 28) }}
-          <strong>Belum ada peminjaman aktif</strong>
-          <span>Peminjaman yang sedang berjalan akan muncul di sini.</span>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Nama</th><th>Jenis</th><th>Kelas</th><th>Lab</th><th>Waktu</th><th></th></tr></thead>
+        <tbody>
+          {% for l in active_loans %}
+          <tr>
+            <td>{{ l.nama }}</td>
+            <td>{{ l.peminjam_type }}</td>
+            <td>{{ l.kelas or '-' }}</td>
+            <td><span class="tag">{{ l.lab }}</span></td>
+            <td>{{ l.waktu_mulai }} sampai {{ l.waktu_selesai }}</td>
+            <td><a class="btn btn-secondary btn-small" href="{{ url_for('return_loan', loan_id=l.id) }}">Selesaikan</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6"><div class="empty">Belum ada peminjaman aktif.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 
-    <section class="card">
-      <div class="card-head">
-        <div>
-          <h2>Jadwal Terdekat</h2>
-          <p class="muted">Maksimal 100 jadwal aktif terdekat.</p>
-        </div>
+  <section class="section">
+    <div class="section-head">
+      <div>
+        <h2>Jadwal aktif</h2>
+        <p>Maksimal 100 jadwal terdekat.</p>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Lab</th><th>Tanggal</th><th>Waktu</th><th>Status</th></tr></thead>
-          <tbody>
-            {% for s in schedule %}
-            <tr>
-              <td><span class="badge">{{ s.lab }}</span></td>
-              <td>{{ s.tanggal }}</td>
-              <td>{{ s.waktu_mulai }}–{{ s.waktu_selesai }}</td>
-              <td><span class="badge badge-warning">Dibooking</span></td>
-            </tr>
-            {% else %}
-            <tr><td colspan="4"><div class="empty-inline">Belum ada jadwal aktif.</div></td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Lab</th><th>Tanggal</th><th>Waktu</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for s in schedule %}
+          <tr>
+            <td><span class="tag">{{ s.lab }}</span></td>
+            <td>{{ s.tanggal }}</td>
+            <td>{{ s.waktu_mulai }} sampai {{ s.waktu_selesai }}</td>
+            <td><span class="tag tag-warning">Dibooking</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4"><div class="empty">Belum ada jadwal aktif.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </section>
 
 <section id="view-guru" class="view">
-  <div class="page-head compact">
+  <div class="page-head">
     <div>
-      <p class="eyebrow">Formulir</p>
-      <h1>Peminjaman Guru</h1>
-      <p class="muted">Ajukan penggunaan Labkom untuk kelas Anda. Foto kondisi awal wajib diunggah.</p>
+      <h1>Peminjaman guru</h1>
+      <p>Isi data kelas, lab, dan waktu penggunaan.</p>
     </div>
   </div>
-  <section class="card form-card">
+  <section class="panel form-panel">
     <form action="{{ url_for('borrow_teacher') }}" method="post" enctype="multipart/form-data" data-once>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="form-grid">
         <div class="field">
           <label for="guru-nama">Nama guru</label>
           <input id="guru-nama" value="{{ current_user }}" disabled>
-          <p class="hint">Nama diambil dari akun yang sedang masuk.</p>
+          <p class="hint">Nama mengikuti akun yang sedang masuk.</p>
         </div>
         <div class="field">
-          <label for="guru-kelas">Kelas <span class="required">*</span></label>
+          <label for="guru-kelas">Kelas <span class="required">wajib</span></label>
           <input id="guru-kelas" name="kelas" required placeholder="Contoh: 9 Asiah" autocomplete="off">
         </div>
         <div class="field">
-          <label for="guru-jumlah">Jumlah murid <span class="required">*</span></label>
+          <label for="guru-jumlah">Jumlah murid <span class="required">wajib</span></label>
           <input id="guru-jumlah" name="jumlah_murid" type="number" min="0" value="0" required>
         </div>
         <div class="field">
-          <label for="guru-lab">Pilih lab <span class="required">*</span></label>
+          <label for="guru-lab">Lab <span class="required">wajib</span></label>
           <select id="guru-lab" name="lab" required>
             <option value="">Pilih lab</option>
             <option>Labkom 1</option>
@@ -124,24 +107,24 @@
           </select>
         </div>
         <div class="field">
-          <label for="guru-tanggal">Tanggal peminjaman <span class="required">*</span></label>
+          <label for="guru-tanggal">Tanggal <span class="required">wajib</span></label>
           <input id="guru-tanggal" name="tanggal" type="date" value="{{ today }}" required>
         </div>
         <div class="field">
-          <label for="guru-mulai">Waktu mulai <span class="required">*</span></label>
+          <label for="guru-mulai">Waktu mulai <span class="required">wajib</span></label>
           <input id="guru-mulai" name="waktu_mulai" type="time" required>
         </div>
         <div class="field">
-          <label for="guru-selesai">Waktu selesai <span class="required">*</span></label>
+          <label for="guru-selesai">Waktu selesai <span class="required">wajib</span></label>
           <input id="guru-selesai" name="waktu_selesai" type="time" required>
         </div>
         <div class="field full">
-          <label for="guru-foto">Foto kondisi awal Labkom <span class="required">*</span></label>
+          <label for="guru-foto">Foto kondisi awal <span class="required">wajib</span></label>
           <input id="guru-foto" name="photo_before" type="file" accept="image/*" capture="environment" required onchange="compressImage(this)">
-          <p class="hint">Ambil foto komputer/peralatan sebelum digunakan. Foto akan dikecilkan otomatis sebelum diunggah.</p>
+          <p class="hint">Foto wajib. Ukuran foto dikecilkan otomatis sebelum diunggah.</p>
         </div>
         <div class="field full form-actions">
-          <button class="btn btn-primary" type="submit">{{ icon('check') }} Simpan Peminjaman</button>
+          <button class="btn btn-primary" type="submit">Simpan peminjaman</button>
         </div>
       </div>
     </form>
@@ -149,29 +132,28 @@
 </section>
 
 <section id="view-murid" class="view">
-  <div class="page-head compact">
+  <div class="page-head">
     <div>
-      <p class="eyebrow">Scan QR</p>
-      <h1>Peminjaman Murid</h1>
-      <p class="muted">Pindai QR berisi NIS murid menggunakan kamera, lalu pilih lab dan durasi.</p>
+      <h1>Scan QR murid</h1>
+      <p>Pindai QR berisi NIS. Kamera memerlukan HTTPS atau localhost.</p>
     </div>
   </div>
   <div class="scanner-grid">
-    <section class="card scanner-card">
-      <div class="card-head">
-        <div><h2>Kamera Scanner</h2><p class="muted">Arahkan QR ke kamera.</p></div>
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>Kamera</h2><p class="muted">Arahkan QR ke kamera.</p></div>
       </div>
       <div id="reader" class="reader"></div>
       <div class="scanner-actions">
-        <button class="btn btn-primary" type="button" onclick="startScanner()">{{ icon('camera') }} Mulai Scan</button>
-        <button class="btn btn-ghost" type="button" onclick="stopScanner()">Matikan Kamera</button>
+        <button class="btn btn-primary" type="button" onclick="startScanner()">Mulai kamera</button>
+        <button class="btn btn-secondary" type="button" onclick="stopScanner()">Matikan kamera</button>
       </div>
-      <p class="hint">Jika browser meminta izin kamera, pilih Izinkan. Kamera memerlukan HTTPS atau localhost.</p>
+      <p class="hint">Jika browser meminta izin kamera, pilih Izinkan.</p>
     </section>
 
-    <section class="card form-card">
-      <div class="card-head">
-        <div><h2>Data Peminjaman</h2><p class="muted">Lengkapi setelah QR terbaca.</p></div>
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>Data peminjaman</h2><p class="muted">Lengkapi setelah QR terbaca.</p></div>
       </div>
       <form action="{{ url_for('borrow_student') }}" method="post" data-once>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -179,7 +161,7 @@
         <div class="studentbox" id="studentbox">Belum ada QR yang dipindai.</div>
         <div class="form-grid">
           <div class="field">
-            <label for="murid-lab">Pilih lab <span class="required">*</span></label>
+            <label for="murid-lab">Lab <span class="required">wajib</span></label>
             <select id="murid-lab" name="lab" required>
               <option value="">Pilih lab</option>
               <option>Labkom 1</option>
@@ -187,7 +169,7 @@
             </select>
           </div>
           <div class="field">
-            <label for="murid-durasi">Durasi <span class="required">*</span></label>
+            <label for="murid-durasi">Durasi <span class="required">wajib</span></label>
             <select id="murid-durasi" name="durasi" required>
               <option value="30">30 menit</option>
               <option value="60" selected>60 menit</option>
@@ -196,71 +178,69 @@
             </select>
           </div>
           <div class="field full form-actions">
-            <button class="btn btn-primary" type="submit">{{ icon('check') }} Mulai Peminjaman</button>
+            <button class="btn btn-primary" type="submit">Mulai peminjaman</button>
           </div>
         </div>
-        <p class="hint">Tanggal dan waktu mulai dicatat otomatis oleh server saat tombol simpan ditekan.</p>
+        <p class="hint">Tanggal dan waktu mulai dicatat otomatis oleh server.</p>
       </form>
     </section>
   </div>
 </section>
 
 <section id="view-riwayat" class="view">
-  <div class="page-head compact">
+  <div class="page-head">
     <div>
-      <p class="eyebrow">Riwayat</p>
-      <h1>Riwayat Peminjaman</h1>
-      <p class="muted">Cari transaksi berdasarkan nama, kelas, lab, atau status.</p>
+      <h1>Riwayat</h1>
+      <p>Cari berdasarkan nama, kelas, lab, atau status.</p>
     </div>
     <div class="search-box">
-      {{ icon('search', 16) }}
-      <input type="search" placeholder="Cari riwayat..." oninput="filterTable(this, 'historyTable')" aria-label="Cari riwayat">
+      <input type="search" placeholder="Cari riwayat" oninput="filterTable(this, 'historyTable')" aria-label="Cari riwayat">
     </div>
   </div>
-  <section class="card">
+  <section class="panel">
     <div class="table-wrap">
       <table id="historyTable">
-        <thead><tr><th>Peminjam</th><th>Jenis</th><th>Lab</th><th>Jadwal</th><th>Status</th><th>Aksi</th></tr></thead>
+        <thead><tr><th>Peminjam</th><th>Jenis</th><th>Lab</th><th>Jadwal</th><th>Status</th><th></th></tr></thead>
         <tbody>
           {% for l in loans %}
           <tr data-search="{{ (l.nama ~ ' ' ~ l.kelas ~ ' ' ~ l.lab ~ ' ' ~ l.status ~ ' ' ~ l.peminjam_type)|lower }}">
             <td>
-              <div class="person-cell">
-                <span class="mini-avatar">{{ l.nama[:1]|upper }}</span>
-                <span><strong>{{ l.nama }}</strong><small>{{ l.kelas or 'Tanpa kelas' }}{% if l.nis %} · NIS {{ l.nis }}{% endif %}</small></span>
+              <div class="person">
+                <span class="initials">{{ l.nama[:1]|upper }}</span>
+                <span><strong>{{ l.nama }}</strong><small>{{ l.kelas or 'Tanpa kelas' }}{% if l.nis %} NIS {{ l.nis }}{% endif %}</small></span>
               </div>
             </td>
             <td>{{ l.peminjam_type }}</td>
-            <td><span class="badge">{{ l.lab }}</span></td>
-            <td><strong>{{ l.tanggal }}</strong><small class="muted">{{ l.waktu_mulai }}–{{ l.waktu_selesai }}</small></td>
+            <td><span class="tag">{{ l.lab }}</span></td>
+            <td><strong>{{ l.tanggal }}</strong><small>{{ l.waktu_mulai }} sampai {{ l.waktu_selesai }}</small></td>
             <td>
               {% if l.status == 'Selesai' %}
-              <span class="badge badge-success">Selesai</span>
+              <span class="tag tag-success">Selesai</span>
               {% else %}
-              <span class="badge badge-warning">Dipinjam</span>
+              <span class="tag tag-warning">Dipinjam</span>
               {% endif %}
             </td>
             <td>
               {% if l.status != 'Selesai' %}
-              <a class="btn btn-sm btn-ghost" href="{{ url_for('return_loan', loan_id=l.id) }}">{{ icon('camera', 14) }} Selesaikan</a>
+              <a class="btn btn-secondary btn-small" href="{{ url_for('return_loan', loan_id=l.id) }}">Selesaikan</a>
               {% else %}
-              <span class="muted">—</span>
+              <span class="muted">-</span>
               {% endif %}
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="6"><div class="empty-inline">Belum ada riwayat peminjaman.</div></td></tr>
+          <tr><td colspan="6"><div class="empty">Belum ada riwayat peminjaman.</div></td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
     {% if total_loans %}
     <div class="pagination">
-      <span class="muted">Menampilkan {{ first_item }}–{{ last_item }} dari {{ total_loans }} transaksi</span>
+      <span class="muted">Menampilkan {{ first_item }} sampai {{ last_item }} dari {{ total_loans }} transaksi</span>
       <div class="pager">
-        {% if page > 1 %}<a class="btn btn-sm btn-ghost" href="{{ url_for('index', page=page-1) }}#riwayat">{{ icon('chevron-left', 14) }} Sebelumnya</a>{% endif %}
+        {% if page > 1 %}<a class="btn btn-secondary btn-small" href="{{ url_for('index', page=page-1) }}#riwayat">Sebelumnya</a>{% endif %}
         <span>Halaman {{ page }} dari {{ pages }}</span>
-        {% if page < pages %}<a class="btn btn-sm btn-ghost" href="{{ url_for('index', page=page+1) }}#riwayat">Berikutnya {{ icon('chevron-right', 14) }}</a>{% endif %}
+        {% if page < pages %}<a class="btn btn-secondary btn-small" href="{{ url_for('index', page=page+1) }}#riwayat">Berikutnya</a>{% endif %}
       </div>
     </div>
     {% endif %}
@@ -269,42 +249,41 @@
 
 {% if is_admin %}
 <section id="view-admin" class="view">
-  <div class="page-head compact">
+  <div class="page-head">
     <div>
-      <p class="eyebrow">Manajemen</p>
-      <h1>Data & Pengaturan</h1>
-      <p class="muted">Kelola akun guru, data murid, ekspor riwayat, dan pembersihan data uji coba.</p>
+      <h1>Manajemen</h1>
+      <p>Kelola akun guru, data murid, dan pemeliharaan data.</p>
     </div>
   </div>
 
-  <div class="admin-grid">
-    <section class="card">
-      <div class="card-head">
-        <div><h2>Akun Guru</h2><p class="muted">Tambah guru baru atau atur ulang password.</p></div>
-        <span class="badge">{{ teachers|length }} aktif</span>
+  <div class="admin-col">
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>Akun guru</h2><p class="muted">Tambah guru baru atau atur ulang password.</p></div>
+        <span class="tag">{{ teachers|length }} aktif</span>
       </div>
       <form action="{{ url_for('manage_teachers') }}" method="post" class="inline-form" data-once>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="field"><label for="guru-baru">Nama guru</label><input id="guru-baru" name="nama" required placeholder="Nama lengkap guru"></div>
-        <div class="field"><label for="guru-password">Password</label><input id="guru-password" type="password" name="password" required minlength="8" autocomplete="new-password" placeholder="Min. 8 karakter"></div>
-        <button class="btn btn-primary" type="submit">{{ icon('user-plus') }} Simpan</button>
+        <div class="field"><label for="guru-baru">Nama guru</label><input id="guru-baru" name="nama" required placeholder="Nama lengkap" autocomplete="off"></div>
+        <div class="field"><label for="guru-password">Password</label><input id="guru-password" type="password" name="password" required minlength="8" autocomplete="new-password" placeholder="Minimal 8 karakter"></div>
+        <button class="btn btn-primary" type="submit">Simpan</button>
       </form>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Nama guru aktif</th><th>Aksi</th></tr></thead>
+          <thead><tr><th>Nama guru aktif</th><th></th></tr></thead>
           <tbody>
             {% for t in teachers %}
             <tr>
-              <td><div class="person-cell"><span class="mini-avatar">{{ t.nama[:1]|upper }}</span><strong>{{ t.nama }}</strong></div></td>
+              <td>{{ t.nama }}</td>
               <td>
-                <form method="post" action="{{ url_for('delete_teacher', name=t.nama) }}" onsubmit="return confirm('Nonaktifkan akun guru ini?')">
+                <form method="post" action="{{ url_for('delete_teacher', name=t.nama) }}" onsubmit="return confirm('Nonaktifkan akun guru ini')">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="btn btn-sm btn-danger" type="submit">{{ icon('trash', 14) }} Nonaktifkan</button>
+                  <button class="btn btn-danger btn-small" type="submit">Nonaktifkan</button>
                 </form>
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="2"><div class="empty-inline">Belum ada akun guru.</div></td></tr>
+            <tr><td colspan="2"><div class="empty">Belum ada akun guru.</div></td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -312,36 +291,36 @@
       <p class="hint">Masukkan nama yang sama untuk mengatur ulang password guru lama.</p>
     </section>
 
-    <section class="card">
-      <div class="card-head">
-        <div><h2>Data Murid</h2><p class="muted">Data ini dipakai untuk validasi QR/NIS.</p></div>
-        <span class="badge">{{ students|length }} murid</span>
+    <section class="panel">
+      <div class="panel-head">
+        <div><h2>Data murid</h2><p class="muted">Data ini dipakai untuk validasi QR dan NIS.</p></div>
+        <span class="tag">{{ students|length }} murid</span>
       </div>
-      <form action="{{ url_for('manage_students') }}" method="post" class="inline-form" data-once>
+      <form action="{{ url_for('manage_students') }}" method="post" class="inline-form three" data-once>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="field"><label for="murid-nis">NIS</label><input id="murid-nis" name="nis" required placeholder="NIS murid" autocomplete="off"></div>
+        <div class="field"><label for="murid-nis">NIS</label><input id="murid-nis" name="nis" required placeholder="NIS" autocomplete="off"></div>
         <div class="field"><label for="murid-nama">Nama</label><input id="murid-nama" name="nama" required placeholder="Nama lengkap" autocomplete="off"></div>
         <div class="field"><label for="murid-kelas">Kelas</label><input id="murid-kelas" name="kelas" required placeholder="Contoh: 7A" autocomplete="off"></div>
-        <button class="btn btn-primary" type="submit">{{ icon('user-plus') }} Simpan</button>
+        <button class="btn btn-primary" type="submit">Simpan</button>
       </form>
       <div class="table-wrap table-tall">
         <table>
-          <thead><tr><th>NIS</th><th>Nama</th><th>Kelas</th><th>Aksi</th></tr></thead>
+          <thead><tr><th>NIS</th><th>Nama</th><th>Kelas</th><th></th></tr></thead>
           <tbody>
             {% for s in students %}
             <tr>
               <td><code>{{ s.nis }}</code></td>
               <td>{{ s.nama }}</td>
-              <td><span class="badge">{{ s.kelas }}</span></td>
+              <td><span class="tag">{{ s.kelas }}</span></td>
               <td>
-                <form method="post" action="{{ url_for('delete_student', nis=s.nis) }}" onsubmit="return confirm('Hapus data murid ini?')">
+                <form method="post" action="{{ url_for('delete_student', nis=s.nis) }}" onsubmit="return confirm('Hapus data murid ini')">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="btn btn-sm btn-danger" type="submit">{{ icon('trash', 14) }} Hapus</button>
+                  <button class="btn btn-danger btn-small" type="submit">Hapus</button>
                 </form>
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="4"><div class="empty-inline">Belum ada data murid. Tambahkan atau impor students.json.</div></td></tr>
+            <tr><td colspan="4"><div class="empty">Belum ada data murid.</div></td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -349,21 +328,22 @@
     </section>
   </div>
 
-  <section class="card tools-card">
-    <div class="card-head">
-      <div><h2>Data & Pemeliharaan</h2><p class="muted">Ekspor riwayat atau bersihkan data uji coba dengan aman.</p></div>
+  <section class="panel">
+    <div class="panel-head">
+      <div><h2>Pemeliharaan data</h2><p class="muted">Ekspor riwayat atau bersihkan data uji coba.</p></div>
     </div>
-    <div class="tool-row">
-      <div><strong>Ekspor CSV</strong><p class="muted">Unduh seluruh riwayat peminjaman dalam format CSV.</p></div>
-      <a class="btn btn-ghost" href="{{ url_for('export_csv') }}">{{ icon('download') }} Unduh CSV</a>
+    <div class="section-head">
+      <div><strong>Ekspor CSV</strong><p class="muted">Unduh seluruh riwayat peminjaman.</p></div>
+      <a class="btn btn-secondary" href="{{ url_for('export_csv') }}">Unduh CSV</a>
     </div>
-    <div class="tool-row danger-zone">
-      <div><strong>Bersihkan data uji coba</strong><p class="muted">Menghapus riwayat dan foto. Sistem membuat backup terlebih dahulu.</p></div>
+    <div class="divider"></div>
+    <div class="section-head">
+      <div><strong>Bersihkan data uji coba</strong><p class="muted">Riwayat dan foto dihapus. Sistem membuat backup terlebih dahulu.</p></div>
       <form action="{{ url_for('clear_all_loans') }}" method="post" onsubmit="return confirmClearLoans(this)">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="inline-confirm">
           <input name="confirmation" autocomplete="off" required placeholder="Ketik BERSIHKAN">
-          <button class="btn btn-danger" type="submit">{{ icon('trash') }} Bersihkan</button>
+          <button class="btn btn-danger" type="submit">Bersihkan</button>
         </div>
       </form>
     </div>

@@ -878,7 +878,7 @@ def borrow_student():
         if conflict:
             flash(
                 f"Jadwal bentrok: {lab} sudah dibooking pukul "
-                f"{conflict['waktu_mulai']}–{conflict['waktu_selesai']} pada tanggal {tanggal}. "
+                f"{conflict['waktu_mulai']} sampai {conflict['waktu_selesai']} pada tanggal {tanggal}. "
                 "Pilih lab atau waktu lain.",
                 "error",
             )
@@ -946,7 +946,7 @@ def borrow_teacher():
         if conflict:
             flash(
                 f"Jadwal bentrok: {lab} sudah dibooking pukul "
-                f"{conflict['waktu_mulai']}–{conflict['waktu_selesai']} pada tanggal {tanggal}. "
+                f"{conflict['waktu_mulai']} sampai {conflict['waktu_selesai']} pada tanggal {tanggal}. "
                 "Pilih waktu lain atau periksa lab lainnya.",
                 "error",
             )
@@ -1152,14 +1152,14 @@ def clear_all_loans():
             _write_backup_zip(backup_path, temp_db)
         _copy_backup_offsite(backup_path)
         _prune_backups()
-    except Exception as exc:
+    except Exception:
         if os.path.exists(backup_path):
             try:
                 os.remove(backup_path)
             except OSError:
                 pass
         app.logger.exception("Pencadangan gagal; data tidak dihapus")
-        flash(f"Data tidak dihapus karena pencadangan gagal: {exc}", "error")
+        flash("Data tidak dihapus. Pencadangan gagal.", "error")
         return redirect(url_for("index"))
     finally:
         if temp_db and os.path.exists(temp_db):
@@ -1179,11 +1179,10 @@ def clear_all_loans():
                 file_path = os.path.join(UPLOAD_DIR, filename)
                 if os.path.isfile(file_path):
                     os.remove(file_path)
-    except Exception as exc:
+    except Exception:
         app.logger.exception("Pembersihan data gagal setelah backup")
         flash(
-            "Cadangan berhasil dibuat, tetapi pembersihan belum tuntas: "
-            f"{exc}. Cadangan: backup_labkom/{os.path.basename(backup_path)}",
+            "Cadangan dibuat, tetapi pembersihan data gagal. Periksa log server.",
             "warning",
         )
         return redirect(url_for("index"))
@@ -1195,7 +1194,7 @@ def clear_all_loans():
     )
     flash(
         "Seluruh riwayat peminjaman dan foto dokumentasi berhasil dibersihkan. "
-        "Data santri dan akun guru tetap tersimpan. "
+        "Data murid dan akun guru tetap tersimpan. "
         f"Cadangan lama tersedia di backup_labkom/{os.path.basename(backup_path)}.",
         "success",
     )

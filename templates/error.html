@@ -1,17 +1,15 @@
 {% extends "base.html" %}
-{% from "_icons.html" import icon %}
-{% block title %}{{ code }} — Labkom{% endblock %}
+{% block title %}{{ code }} - Labkom{% endblock %}
 {% block body_class %}error-body{% endblock %}
 {% block body %}
 <main class="error-shell">
   <div class="error-card">
-    <span class="error-icon">{{ icon('alert', 28) }}</span>
-    <p class="eyebrow">Error {{ code }}</p>
+    <p class="error-code">Error {{ code }}</p>
     <h1>{{ title }}</h1>
     <p class="muted">{{ message }}</p>
     <div class="error-actions">
       <a class="btn btn-primary" href="{{ url_for('index') }}">Kembali ke dashboard</a>
-      <a class="btn btn-ghost" href="{{ url_for('login') }}">Halaman login</a>
+      <a class="btn btn-secondary" href="{{ url_for('login') }}">Halaman login</a>
     </div>
   </div>
 </main>

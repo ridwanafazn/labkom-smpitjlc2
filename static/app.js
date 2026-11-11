@@ -109,10 +109,6 @@ function confirmClearLoans(form) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  document.querySelectorAll(".toast").forEach((toast) => {
-    setTimeout(() => toast.remove(), 6500);
-  });
-
   document.querySelectorAll("form[data-once]").forEach((form) => {
     form.addEventListener("submit", (event) => {
       if (event.defaultPrevented) return;
