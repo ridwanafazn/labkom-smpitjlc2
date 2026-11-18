@@ -163,6 +163,7 @@ td small { display: block; color: var(--muted); font-size: 11px; }
 .tag { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #ecece8; color: #4f4f4a; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
 .tag-success { background: var(--mint); color: var(--mint-ink); }
 .tag-warning { background: var(--warning-soft); color: var(--warning); }
+.tag-danger { background: var(--red-soft); color: var(--red); }
 .empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 13px; }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .person { display: flex; align-items: center; gap: 9px; }

@@ -438,6 +438,52 @@ def test_readd_teacher_reactivates_and_hashes_password(client):
     assert "password-baru" not in row["password_hash"]
 
 
+def test_teacher_booking_starts_pending(client):
+    add_teacher("Guru A")
+    login(client, "Guru A", "teacher")
+    response = client.post(
+        "/borrow/teacher",
+        data={
+            "kelas": "9A",
+            "jumlah_murid": "10",
+            "lab": "Labkom 1",
+            "tanggal": "2099-01-01",
+            "waktu_mulai": "10:00",
+            "waktu_selesai": "11:00",
+            "photo_before": (io.BytesIO(jpeg_bytes()), "awal.jpg"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 302
+    with labkom.db() as c:
+        loan = c.execute("SELECT status FROM loans ORDER BY id DESC LIMIT 1").fetchone()
+    assert loan["status"] == "Menunggu"
+
+
+def test_admin_can_approve_and_reject_booking(client):
+    pending = insert_loan(status="Menunggu", tanggal="2099-01-02")
+    login(client)
+    response = client.post(f"/admin/loans/{pending}/approve", follow_redirects=True)
+    assert b"disetujui" in response.data.lower()
+    with labkom.db() as c:
+        assert c.execute("SELECT status FROM loans WHERE id=?", (pending,)).fetchone()["status"] == "Disetujui"
+
+    rejected = insert_loan(status="Menunggu", tanggal="2099-01-03")
+    client.post(f"/admin/loans/{rejected}/reject", follow_redirects=True)
+    with labkom.db() as c:
+        assert c.execute("SELECT status FROM loans WHERE id=?", (rejected,)).fetchone()["status"] == "Ditolak"
+
+
+def test_approval_rejects_conflicting_schedule(client):
+    insert_loan(status="Disetujui", lab="Labkom 1", tanggal="2099-01-04", waktu_mulai="10:00", waktu_selesai="11:00")
+    pending = insert_loan(status="Menunggu", lab="Labkom 1", tanggal="2099-01-04", waktu_mulai="10:30", waktu_selesai="10:45")
+    login(client)
+    response = client.post(f"/admin/loans/{pending}/approve", follow_redirects=True)
+    assert b"Tidak bisa disetujui" in response.data
+    with labkom.db() as c:
+        assert c.execute("SELECT status FROM loans WHERE id=?", (pending,)).fetchone()["status"] == "Menunggu"
+
+
 def test_deactivated_teacher_is_hidden_and_can_be_readded(client):
     add_teacher("Guru Cuti")
     login(client)

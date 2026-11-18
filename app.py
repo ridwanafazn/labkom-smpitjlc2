@@ -339,6 +339,12 @@ def init_db():
             c.execute("ALTER TABLE loans ADD COLUMN created_by TEXT DEFAULT ''")
         if "completed_by" not in cols:
             c.execute("ALTER TABLE loans ADD COLUMN completed_by TEXT DEFAULT ''")
+        if "decision_by" not in cols:
+            c.execute("ALTER TABLE loans ADD COLUMN decision_by TEXT DEFAULT ''")
+        if "decision_at" not in cols:
+            c.execute("ALTER TABLE loans ADD COLUMN decision_at TEXT DEFAULT ''")
+        if "decision_note" not in cols:
+            c.execute("ALTER TABLE loans ADD COLUMN decision_note TEXT DEFAULT ''")
         c.execute(
             "UPDATE loans SET created_by=nama "
             "WHERE peminjam_type='Guru' AND (created_by IS NULL OR created_by='')"
@@ -576,74 +582,101 @@ def save_webcam_photo(data_url, prefix):
         raise ValueError("Foto webcam tidak valid atau ukurannya terlalu besar.")
 
 
-def telegram_notify(loan):
+def telegram_configured():
+    return bool(
+        os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+        and os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    )
+
+
+def telegram_send(message, photo_fields=None):
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
-        return False, "Telegram belum dikonfigurasi. Isi TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID."
-    msg = (
-        "✅ Peminjaman Labkom selesai digunakan\n"
+        return False, "Telegram belum dikonfigurasi."
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": message},
+            timeout=8,
+        )
+        response.raise_for_status()
+        if not response.json().get("ok"):
+            return False, "Telegram menolak pesan."
+        for field, caption in photo_fields or []:
+            filename = field or ""
+            photo = get_photo(filename) if filename else None
+            if not photo:
+                continue
+            data, content_type = photo
+            photo_response = requests.post(
+                f"https://api.telegram.org/bot{token}/sendPhoto",
+                data={"chat_id": chat_id, "caption": caption},
+                files={"photo": (filename, data, content_type)},
+                timeout=20,
+            )
+            photo_response.raise_for_status()
+            if not photo_response.json().get("ok"):
+                return False, "Pesan terkirim, tetapi salah satu foto gagal dikirim."
+        return True, "Notifikasi Telegram terkirim."
+    except Exception as exc:
+        app.logger.warning("Telegram gagal: %s", type(exc).__name__)
+        return False, "Gagal mengirim Telegram. Periksa konfigurasi bot."
+
+
+def telegram_notify(loan):
+    message = (
+        "Peminjaman Labkom selesai digunakan\n"
         f"Nama: {loan['nama']}\nJenis: {loan['peminjam_type']}\n"
         f"Tanggal: {loan['tanggal']}\nLab: {loan['lab']}\n"
         f"Waktu mulai: {loan['waktu_mulai']}\nEstimasi selesai: {loan['waktu_selesai']}\n"
         f"Selesai aktual: {(loan.get('returned_at') or '')[11:16] if loan.get('returned_at') else loan['waktu_selesai']}"
     )
-    try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": msg},
-            timeout=10,
-        )
-        r.raise_for_status()
-        if not r.json().get("ok"):
-            return False, "Telegram menolak pesan; periksa token dan chat ID."
-        for field, caption in [
-            ("photo_before", "Foto kondisi awal"),
-            ("photo_after", "Foto kondisi akhir"),
-        ]:
-            filename = loan.get(field) or ""
-            photo = get_photo(filename) if filename else None
-            if photo:
-                data, content_type = photo
-                pr = requests.post(
-                    f"https://api.telegram.org/bot{token}/sendPhoto",
-                    data={
-                        "chat_id": chat_id,
-                        "caption": f"{caption} — {loan['nama']} ({loan['lab']})",
-                    },
-                    files={"photo": (filename, data, content_type)},
-                    timeout=90,
-                )
-                pr.raise_for_status()
-                if not pr.json().get("ok"):
-                    return False, "Pesan terkirim, tetapi Telegram gagal mengirim salah satu foto."
-        return True, "Notifikasi dan foto (jika ada) dikirim ke Telegram."
-    except Exception as exc:
-        # Jangan log/stringify exception mentah: URL Telegram mengandung bot token.
-        app.logger.warning("Telegram gagal: %s", type(exc).__name__)
-        return False, "Gagal mengirim Telegram. Periksa konfigurasi bot dan koneksi server."
+    return telegram_send(
+        message,
+        [
+            (loan.get("photo_before") or "", "Foto kondisi awal"),
+            (loan.get("photo_after") or "", "Foto kondisi akhir"),
+        ],
+    )
 
 
-def send_telegram_async(loan):
-    """Kirim Telegram di thread terpisah agar request tidak tertahan."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat_id:
-        return False
-    threading.Thread(target=telegram_notify, args=(loan,), daemon=True).start()
-    return True
+def telegram_notify_request(loan):
+    message = (
+        "Pengajuan peminjaman baru\n"
+        f"Nama: {loan['nama']}\nJenis: {loan['peminjam_type']}\n"
+        f"Kelas: {loan['kelas']}\nLab: {loan['lab']}\n"
+        f"Tanggal: {loan['tanggal']}\nWaktu: {loan['waktu_mulai']} sampai {loan['waktu_selesai']}\n"
+        f"Jumlah murid: {loan['jumlah_murid']}\n"
+        "Status: Menunggu persetujuan"
+    )
+    return telegram_send(message, [(loan.get("photo_before") or "", "Foto kondisi awal")])
 
 
-def find_schedule_conflict(c, lab, tanggal, mulai, selesai):
-    """Return one active overlapping booking for the same lab and date, if any."""
-    return c.execute(
+def telegram_notify_decision(loan, decision):
+    message = (
+        f"Peminjaman {decision}\n"
+        f"Nama: {loan['nama']}\nJenis: {loan['peminjam_type']}\n"
+        f"Kelas: {loan['kelas']}\nLab: {loan['lab']}\n"
+        f"Tanggal: {loan['tanggal']}\nWaktu: {loan['waktu_mulai']} sampai {loan['waktu_selesai']}"
+    )
+    return telegram_send(message)
+
+
+def find_schedule_conflict(c, lab, tanggal, mulai, selesai, exclude_id=None):
+    """Return one approved or active overlapping booking for the same lab."""
+    query = (
         """SELECT id, nama, lab, tanggal, waktu_mulai, waktu_selesai
            FROM loans
-           WHERE lab=? AND tanggal=? AND status='Dipinjam'
-             AND waktu_mulai < ? AND waktu_selesai > ?
-           ORDER BY waktu_mulai LIMIT 1""",
-        (lab, tanggal, selesai, mulai),
-    ).fetchone()
+           WHERE lab=? AND tanggal=? AND status IN ('Disetujui','Dipinjam')
+             AND waktu_mulai < ? AND waktu_selesai > ?"""
+    )
+    params = [lab, tanggal, selesai, mulai]
+    if exclude_id is not None:
+        query += " AND id<>?"
+        params.append(exclude_id)
+    query += " ORDER BY waktu_mulai LIMIT 1"
+    return c.execute(query, tuple(params)).fetchone()
 
 
 def csv_safe(value):
@@ -917,6 +950,74 @@ def activate_teacher(teacher_id):
     return redirect_section("admin")
 
 
+@app.route("/admin/loans/<int:loan_id>/approve", methods=["POST"])
+def approve_loan(loan_id):
+    if session.get("role") != "admin":
+        abort(403)
+    with db(immediate=True) as c:
+        loan = c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone()
+        if not loan:
+            flash("Pengajuan tidak ditemukan.", "error")
+            return redirect_section("admin")
+        if loan["status"] != "Menunggu":
+            flash("Pengajuan ini sudah diproses.", "error")
+            return redirect_section("admin")
+        conflict = find_schedule_conflict(
+            c,
+            loan["lab"],
+            loan["tanggal"],
+            loan["waktu_mulai"],
+            loan["waktu_selesai"],
+            exclude_id=loan_id,
+        )
+        if conflict:
+            flash(
+                f"Tidak bisa disetujui. {loan['lab']} sudah dibooking "
+                f"{conflict['nama']} pukul {conflict['waktu_mulai']} sampai "
+                f"{conflict['waktu_selesai']}.",
+                "error",
+            )
+            return redirect_section("admin")
+        c.execute(
+            "UPDATE loans SET status='Disetujui', decision_by=?, decision_at=? WHERE id=?",
+            (session.get("user_name", ""), datetime.now(WIB).isoformat(timespec="seconds"), loan_id),
+        )
+        loan = dict(c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone())
+    app.logger.info(
+        "AUDIT setujui loan=%s oleh=%s", loan_id, session.get("user_name", "-")
+    )
+    if telegram_configured():
+        telegram_notify_decision(loan, "disetujui")
+    flash("Pengajuan peminjaman disetujui.", "success")
+    return redirect_section("admin")
+
+
+@app.route("/admin/loans/<int:loan_id>/reject", methods=["POST"])
+def reject_loan(loan_id):
+    if session.get("role") != "admin":
+        abort(403)
+    with db() as c:
+        loan = c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone()
+        if not loan:
+            flash("Pengajuan tidak ditemukan.", "error")
+            return redirect_section("admin")
+        if loan["status"] != "Menunggu":
+            flash("Pengajuan ini sudah diproses.", "error")
+            return redirect_section("admin")
+        c.execute(
+            "UPDATE loans SET status='Ditolak', decision_by=?, decision_at=? WHERE id=?",
+            (session.get("user_name", ""), datetime.now(WIB).isoformat(timespec="seconds"), loan_id),
+        )
+        loan = dict(c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone())
+    app.logger.info(
+        "AUDIT tolak loan=%s oleh=%s", loan_id, session.get("user_name", "-")
+    )
+    if telegram_configured():
+        telegram_notify_decision(loan, "ditolak")
+    flash("Pengajuan peminjaman ditolak.", "success")
+    return redirect_section("admin")
+
+
 @app.route("/admin/students", methods=["POST"])
 def manage_students():
     if session.get("role") != "admin":
@@ -983,11 +1084,16 @@ def index():
                 (PAGE_SIZE, offset),
             ).fetchall()
             active_loans = c.execute(
-                "SELECT * FROM loans WHERE status='Dipinjam' ORDER BY created_at ASC"
+                "SELECT * FROM loans WHERE status IN ('Disetujui','Dipinjam') "
+                "ORDER BY created_at ASC"
+            ).fetchall()
+            pending_loans = c.execute(
+                "SELECT * FROM loans WHERE status='Menunggu' ORDER BY created_at ASC"
             ).fetchall()
             schedule = c.execute(
                 "SELECT lab,tanggal,waktu_mulai,waktu_selesai FROM loans "
-                "WHERE status='Dipinjam' ORDER BY tanggal,waktu_mulai LIMIT 100"
+                "WHERE status IN ('Disetujui','Dipinjam') "
+                "ORDER BY tanggal,waktu_mulai LIMIT 100"
             ).fetchall()
             teachers = c.execute(
                 "SELECT id,nama FROM teachers "
@@ -1006,19 +1112,27 @@ def index():
                 (session["user_name"], PAGE_SIZE, offset),
             ).fetchall()
             active_loans = c.execute(
-                "SELECT * FROM loans WHERE status='Dipinjam' AND created_by=? "
+                "SELECT * FROM loans WHERE status IN ('Disetujui','Dipinjam') "
+                "AND created_by=? ORDER BY created_at ASC",
+                (session["user_name"],),
+            ).fetchall()
+            pending_loans = c.execute(
+                "SELECT * FROM loans WHERE status='Menunggu' AND created_by=? "
                 "ORDER BY created_at ASC",
                 (session["user_name"],),
             ).fetchall()
             schedule = c.execute(
                 "SELECT lab,tanggal,waktu_mulai,waktu_selesai FROM loans "
-                "WHERE status='Dipinjam' ORDER BY tanggal,waktu_mulai LIMIT 100"
+                "WHERE status IN ('Disetujui','Dipinjam') "
+                "ORDER BY tanggal,waktu_mulai LIMIT 100"
             ).fetchall()
             teachers = []
             inactive_teachers = []
             students = []
         students_count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
-        active = c.execute("SELECT COUNT(*) n FROM loans WHERE status='Dipinjam'").fetchone()["n"]
+        active = c.execute(
+            "SELECT COUNT(*) n FROM loans WHERE status IN ('Disetujui','Dipinjam')"
+        ).fetchone()["n"]
 
     return render_template(
         "index.html",
@@ -1027,6 +1141,7 @@ def index():
         active=active,
         schedule=schedule,
         active_loans=active_loans,
+        pending_loans=pending_loans,
         teachers=teachers,
         inactive_teachers=inactive_teachers,
         students=students,
@@ -1058,7 +1173,7 @@ def booking_lookup():
         rows = c.execute(
             """SELECT tanggal,waktu_mulai,waktu_selesai,nama,peminjam_type,kelas
                FROM loans
-               WHERE lab=? AND status='Dipinjam' AND tanggal>=?
+               WHERE lab=? AND status IN ('Disetujui','Dipinjam') AND tanggal>=?
                ORDER BY tanggal,waktu_mulai LIMIT 50""",
             (lab, today),
         ).fetchall()
@@ -1212,7 +1327,7 @@ def borrow_teacher():
         try:
             created = c.execute(
                 """INSERT INTO loans(peminjam_type,nama,kelas,jumlah_murid,lab,tanggal,waktu_mulai,waktu_selesai,status,created_at,photo_before,created_by)
-                  VALUES('Guru',?,?,?,?,?,?,?,'Dipinjam',?,?,?) RETURNING id""",
+                  VALUES('Guru',?,?,?,?,?,?,?,'Menunggu',?,?,?) RETURNING id""",
                 (
                     nama,
                     kelas,
@@ -1237,9 +1352,26 @@ def borrow_teacher():
             app.logger.exception("Gagal menyimpan peminjaman guru")
             raise
     app.logger.info(
-        "AUDIT peminjaman guru=%s lab=%s tanggal=%s %s-%s", nama, lab, tanggal, mulai, selesai
+        "AUDIT pengajuan guru=%s lab=%s tanggal=%s %s-%s", nama, lab, tanggal, mulai, selesai
     )
-    flash(f"Peminjaman oleh {nama} tercatat.", "success")
+    with db() as c:
+        loan_row = c.execute(
+            "SELECT * FROM loans WHERE id=?", (created["id"],)
+        ).fetchone()
+    loan = dict(loan_row)
+    if telegram_configured():
+        ok, _ = telegram_notify_request(loan)
+        if not ok:
+            flash(
+                "Pengajuan dikirim dan menunggu persetujuan admin. "
+                "Notifikasi Telegram gagal dikirim.",
+                "warning",
+            )
+            return redirect_section("guru")
+    flash(
+        "Pengajuan dikirim dan menunggu persetujuan admin.",
+        "success",
+    )
     return redirect_section("guru")
 
 
@@ -1255,6 +1387,12 @@ def return_loan(loan_id):
         abort(403)
     if loan["status"] == "Selesai":
         flash("Peminjaman ini sudah ditandai selesai.", "error")
+        return redirect_section("riwayat")
+    if loan["status"] == "Menunggu":
+        flash("Peminjaman ini belum disetujui admin.", "error")
+        return redirect_section("riwayat")
+    if loan["status"] == "Ditolak":
+        flash("Peminjaman ini ditolak admin.", "error")
         return redirect_section("riwayat")
     if request.method == "GET":
         return render_template("return.html", loan=loan)
@@ -1299,14 +1437,15 @@ def return_loan(loan_id):
     app.logger.info(
         "AUDIT selesai loan=%s oleh=%s", loan_id, session.get("user_name", "-")
     )
-    if send_telegram_async(loan):
-        flash(
-            "Peminjaman ditandai selesai. Notifikasi Telegram diproses di latar belakang.",
-            "success",
-        )
+    if telegram_configured():
+        ok, _ = telegram_notify(loan)
+        if ok:
+            flash("Peminjaman ditandai selesai. Notifikasi Telegram terkirim.", "success")
+        else:
+            flash("Peminjaman ditandai selesai. Notifikasi Telegram gagal.", "warning")
     else:
         flash(
-            "Peminjaman ditandai selesai. Telegram belum dikonfigurasi; notifikasi tidak dikirim.",
+            "Peminjaman ditandai selesai. Telegram belum dikonfigurasi.",
             "warning",
         )
     return redirect_section("riwayat")

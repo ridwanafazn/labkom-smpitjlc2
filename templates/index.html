@@ -19,16 +19,44 @@
     <div class="stat"><strong>2</strong><span>Lab</span></div>
   </div>
 
+  {% if not is_admin and pending_loans %}
+  <section class="section">
+    <div class="section-head">
+      <div>
+        <h2>Menunggu persetujuan</h2>
+        <p>Pengajuan yang belum diproses admin.</p>
+      </div>
+      <span class="tag">{{ pending_loans|length }} pengajuan</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Lab</th><th>Tanggal</th><th>Waktu</th><th>Kelas</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for l in pending_loans %}
+          <tr>
+            <td><span class="tag">{{ l.lab }}</span></td>
+            <td>{{ l.tanggal }}</td>
+            <td>{{ l.waktu_mulai }} sampai {{ l.waktu_selesai }}</td>
+            <td>{{ l.kelas or '-' }}</td>
+            <td><span class="tag tag-warning">Menunggu</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
   <section class="section">
     <div class="section-head">
       <div>
         <h2>Peminjaman aktif</h2>
-        <p>Transaksi yang belum selesai.</p>
+        <p>Transaksi yang sudah disetujui atau sedang digunakan.</p>
       </div>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Nama</th><th>Jenis</th><th>Kelas</th><th>Lab</th><th>Waktu</th><th></th></tr></thead>
+        <thead><tr><th>Nama</th><th>Jenis</th><th>Kelas</th><th>Lab</th><th>Waktu</th><th>Status</th><th></th></tr></thead>
         <tbody>
           {% for l in active_loans %}
           <tr>
@@ -37,6 +65,7 @@
             <td>{{ l.kelas or '-' }}</td>
             <td><span class="tag">{{ l.lab }}</span></td>
             <td>{{ l.waktu_mulai }} sampai {{ l.waktu_selesai }}</td>
+            <td>{% if l.status == 'Disetujui' %}<span class="tag tag-success">Disetujui</span>{% else %}<span class="tag tag-warning">Dipinjam</span>{% endif %}</td>
             <td>
               <div class="row-actions">
                 {% if l.photo_before or l.photo_after %}<a class="btn btn-secondary btn-small" href="{{ url_for('loan_photos', loan_id=l.id) }}">Foto</a>{% endif %}
@@ -45,7 +74,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="6"><div class="empty">Belum ada peminjaman aktif.</div></td></tr>
+          <tr><td colspan="7"><div class="empty">Belum ada peminjaman aktif.</div></td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -228,6 +257,12 @@
             <td>
               {% if l.status == 'Selesai' %}
               <span class="tag tag-success">Selesai</span>
+              {% elif l.status == 'Disetujui' %}
+              <span class="tag tag-success">Disetujui</span>
+              {% elif l.status == 'Menunggu' %}
+              <span class="tag tag-warning">Menunggu</span>
+              {% elif l.status == 'Ditolak' %}
+              <span class="tag tag-danger">Ditolak</span>
               {% else %}
               <span class="tag tag-warning">Dipinjam</span>
               {% endif %}
@@ -235,8 +270,8 @@
             <td>
               <div class="row-actions">
                 {% if l.photo_before or l.photo_after %}<a class="btn btn-secondary btn-small" href="{{ url_for('loan_photos', loan_id=l.id) }}">Foto</a>{% endif %}
-                {% if l.status != 'Selesai' %}<a class="btn btn-secondary btn-small" href="{{ url_for('return_loan', loan_id=l.id) }}">Selesaikan</a>{% endif %}
-                {% if not l.photo_before and not l.photo_after and l.status == 'Selesai' %}<span class="muted">-</span>{% endif %}
+                {% if l.status in ['Disetujui','Dipinjam'] %}<a class="btn btn-secondary btn-small" href="{{ url_for('return_loan', loan_id=l.id) }}">Selesaikan</a>{% endif %}
+                {% if not l.photo_before and not l.photo_after and l.status not in ['Disetujui','Dipinjam'] %}<span class="muted">-</span>{% endif %}
               </div>
             </td>
           </tr>
@@ -267,6 +302,45 @@
       <p>Kelola akun guru, data murid, dan pemeliharaan data.</p>
     </div>
   </div>
+
+  {% if pending_loans %}
+  <section class="panel">
+    <div class="panel-head">
+      <div><h2>Menunggu persetujuan</h2><p class="muted">Periksa jadwal sebelum menyetujui pengajuan.</p></div>
+      <span class="tag">{{ pending_loans|length }} pengajuan</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Peminjam</th><th>Kelas</th><th>Lab</th><th>Jadwal</th><th>Foto</th><th>Aksi</th></tr></thead>
+        <tbody>
+          {% for l in pending_loans %}
+          <tr>
+            <td><strong>{{ l.nama }}</strong><small class="muted">{{ l.jumlah_murid }} murid · diajukan {{ l.created_at[:16].replace('T', ' ') }}</small></td>
+            <td>{{ l.kelas or '-' }}</td>
+            <td><span class="tag">{{ l.lab }}</span></td>
+            <td><strong>{{ l.tanggal }}</strong><small class="muted">{{ l.waktu_mulai }} sampai {{ l.waktu_selesai }}</small></td>
+            <td>{% if l.photo_before %}<a class="btn btn-secondary btn-small" href="{{ url_for('loan_photos', loan_id=l.id) }}">Foto</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+            <td>
+              <div class="row-actions">
+                <form method="post" action="{{ url_for('approve_loan', loan_id=l.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="section" value="admin">
+                  <button class="btn btn-primary btn-small" type="submit">Setujui</button>
+                </form>
+                <form method="post" action="{{ url_for('reject_loan', loan_id=l.id) }}" onsubmit="return confirm('Tolak pengajuan ini')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="section" value="admin">
+                  <button class="btn btn-outline-danger btn-small" type="submit">Tolak</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
 
   <div class="admin-col">
     <section class="panel">
