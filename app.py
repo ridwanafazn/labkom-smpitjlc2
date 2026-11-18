@@ -1621,6 +1621,7 @@ def borrow_student():
                     (created["id"], class_name),
                 )
         except INTEGRITY_ERRORS:
+            c.rollback()
             flash(
                 "Murid ini masih memiliki peminjaman aktif. "
                 "Selesaikan transaksi tersebut terlebih dahulu.",
@@ -1683,23 +1684,24 @@ def borrow_teacher():
         flash("Jumlah murid harus antara 1 sampai 1000.", "error")
         return redirect_section("guru")
     kelas = ", ".join(classes)
-    with db(immediate=True) as c:
-        # Cek bentrok dulu supaya foto tidak tersimpan sebagai file yatim.
-        conflict = find_schedule_conflict(c, lab, tanggal, mulai, selesai)
-        if conflict:
-            flash(
-                f"Jadwal bentrok: {lab} sudah dibooking pukul "
-                f"{conflict['waktu_mulai']} sampai {conflict['waktu_selesai']} pada tanggal {tanggal}. "
-                "Pilih waktu lain atau periksa lab lainnya.",
-                "error",
-            )
-            return redirect_section("guru")
-        try:
-            photo_before = save_uploaded_photo(photo_before_file, "awal_guru")
-        except ValueError as e:
-            flash(str(e), "error")
-            return redirect_section("guru")
-        try:
+    photo_before = ""
+    try:
+        with db(immediate=True) as c:
+            # Cek bentrok dulu supaya foto tidak tersimpan sebagai file yatim.
+            conflict = find_schedule_conflict(c, lab, tanggal, mulai, selesai)
+            if conflict:
+                flash(
+                    f"Jadwal bentrok: {lab} sudah dibooking pukul "
+                    f"{conflict['waktu_mulai']} sampai {conflict['waktu_selesai']} pada tanggal {tanggal}. "
+                    "Pilih waktu lain atau periksa lab lainnya.",
+                    "error",
+                )
+                return redirect_section("guru")
+            try:
+                photo_before = save_uploaded_photo(photo_before_file, "awal_guru")
+            except ValueError as e:
+                flash(str(e), "error")
+                return redirect_section("guru")
             created = c.execute(
                 """INSERT INTO loans(peminjam_type,nama,kelas,jumlah_murid,lab,tanggal,waktu_mulai,waktu_selesai,status,created_at,photo_before,created_by)
                   VALUES('Guru',?,?,?,?,?,?,?,'Menunggu',?,?,?) RETURNING id""",
@@ -1722,10 +1724,12 @@ def borrow_teacher():
                     "ON CONFLICT (loan_id,kelas) DO NOTHING",
                     (created["id"], class_name),
                 )
-        except Exception:
-            remove_uploaded_photo(photo_before)
-            app.logger.exception("Gagal menyimpan peminjaman guru")
-            raise
+    except Exception:
+        # Transaksi sudah rollback saat keluar dari blok db(); bersihkan file
+        # memakai koneksi request yang sama setelah transaksi pulih.
+        remove_uploaded_photo(photo_before)
+        app.logger.exception("Gagal menyimpan peminjaman guru")
+        raise
     app.logger.info(
         "AUDIT pengajuan guru=%s lab=%s tanggal=%s %s-%s", nama, lab, tanggal, mulai, selesai
     )
