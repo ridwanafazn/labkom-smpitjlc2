@@ -9,14 +9,14 @@
   <title>{% block title %}Labkom - Sistem Peminjaman{% endblock %}</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111827'/%3E%3Crect y='52' width='64' height='12' fill='%23b4232f'/%3E%3Cpath d='M18 20h28v22H18z' fill='none' stroke='white' stroke-width='4'/%3E%3C/svg%3E">
   <link rel="preload" href="{{ url_for('static', filename='fonts/manrope-latin.woff2') }}" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=asset_version) }}">
+  <meta name="labkom-qr-src" content="{{ url_for('static', filename='html5-qrcode.min.js', v=asset_version) }}">
   {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
   {% block body %}{% endblock %}
-  <script src="{{ url_for('static', filename='html5-qrcode.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='photo-compress.js') }}"></script>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ url_for('static', filename='photo-compress.js', v=asset_version) }}"></script>
+  <script src="{{ url_for('static', filename='app.js', v=asset_version) }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

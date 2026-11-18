@@ -1,5 +1,25 @@
 let scanBusy = false;
 let scanner = null;
+let scannerLibraryPromise = null;
+
+function loadScannerLibrary() {
+  if (window.Html5Qrcode) return Promise.resolve();
+  if (scannerLibraryPromise) return scannerLibraryPromise;
+  const meta = document.querySelector('meta[name="labkom-qr-src"]');
+  const source = meta ? meta.content : "/static/html5-qrcode.min.js";
+  scannerLibraryPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = source;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      scannerLibraryPromise = null;
+      reject(new Error("Pustaka scanner gagal dimuat."));
+    };
+    document.head.appendChild(script);
+  });
+  return scannerLibraryPromise;
+}
 
 function showView(id, button) {
   const target = document.getElementById("view-" + id);
@@ -12,6 +32,7 @@ function showView(id, button) {
     else item.removeAttribute("aria-current");
   });
   if (id !== "murid") stopScanner();
+  else loadScannerLibrary().catch(() => {});
   if (window.location.hash !== "#" + id) {
     const base = window.location.pathname + window.location.search;
     history.replaceState(null, "", id === "dashboard" ? base : "#" + id);
@@ -182,6 +203,13 @@ async function handleScan(decoded) {
 }
 
 async function startScanner() {
+  setScannerStatus("Menyiapkan kamera...");
+  try {
+    await loadScannerLibrary();
+  } catch (error) {
+    setScannerStatus("Pustaka scanner gagal dimuat. Periksa koneksi lalu muat ulang.");
+    return;
+  }
   if (!window.Html5Qrcode) {
     setScannerStatus("Pustaka scanner tidak termuat. Muat ulang halaman.");
     return;

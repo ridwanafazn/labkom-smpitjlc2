@@ -3,6 +3,7 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import zipfile
 from datetime import datetime, timedelta
 
@@ -673,6 +674,7 @@ def test_photo_access_ownership(client):
     response = client.get("/uploads_labkom/b.jpg")
     assert response.status_code == 200
     assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["Cache-Control"] == "private, max-age=31536000, immutable"
 
 
 def test_admin_manages_students(client):
@@ -749,6 +751,79 @@ def test_pagination(client):
     assert b"dari 55 transaksi" in first.data
     assert b"Menampilkan 1" in first.data
     assert b"Menampilkan 51" in second.data
+
+
+def test_static_assets_are_versioned_and_scanner_is_lazy(client):
+    text = client.get("/login").get_data(as_text=True)
+    assert "/static/app.css?v=" in text
+    assert 'name="labkom-qr-src"' in text
+    assert '<script src="/static/html5-qrcode' not in text
+    css = client.get("/static/app.css")
+    assert css.status_code == 200
+    assert css.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+
+def test_telegram_request_uses_single_photo_call(client, monkeypatch):
+    with open(os.path.join(labkom.UPLOAD_DIR, "req.jpg"), "wb") as f:
+        f.write(b"foto")
+    loan_id = insert_loan(photo_before="req.jpg", status="Menunggu")
+    with labkom.db() as c:
+        loan = dict(c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone())
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"ok": True, "result": {"message_id": 77}}
+
+    def fake_post(url, data=None, files=None, timeout=None):
+        calls.append((url, data, files))
+        return FakeResponse()
+
+    monkeypatch.setattr(labkom.requests, "post", fake_post)
+    ok, _ = labkom.telegram_notify_request(loan)
+    assert ok is True
+    assert len(calls) == 1
+    assert calls[0][0].endswith("/sendPhoto")
+    assert "caption" in calls[0][1]
+    assert "reply_markup" in calls[0][1]
+
+
+def test_telegram_completion_photos_are_sent_in_parallel(client, monkeypatch):
+    with open(os.path.join(labkom.UPLOAD_DIR, "before.jpg"), "wb") as f:
+        f.write(b"before")
+    with open(os.path.join(labkom.UPLOAD_DIR, "after.jpg"), "wb") as f:
+        f.write(b"after")
+    loan_id = insert_loan(
+        status="Selesai",
+        photo_before="before.jpg",
+        photo_after="after.jpg",
+        returned_at="2026-11-18T12:00:00+07:00",
+    )
+    with labkom.db() as c:
+        loan = dict(c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone())
+
+    barrier = threading.Barrier(2, timeout=2)
+    threads = []
+
+    def fake_send(message, photo_fields=None, reply_markup=None):
+        return True, "ok"
+
+    def fake_photo(filename, data, content_type, caption, reply_markup=None):
+        threads.append(threading.get_ident())
+        barrier.wait()
+        return True, "ok"
+
+    monkeypatch.setattr(labkom, "telegram_send", fake_send)
+    monkeypatch.setattr(labkom, "telegram_send_photo", fake_photo)
+    ok, _ = labkom.telegram_notify(loan)
+    assert ok is True
+    assert len(threads) == 2
+    assert len(set(threads)) == 2
 
 
 def test_students_json_import_is_robust(client, monkeypatch):

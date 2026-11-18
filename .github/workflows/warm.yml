@@ -1,0 +1,16 @@
+name: Warm production
+
+on:
+  schedule:
+    # Setiap 5 menit pada jam sekolah WIB, Senin sampai Sabtu.
+    - cron: "*/5 0-10 * * 1-6"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health check
+        run: curl --fail --silent --show-error --max-time 20 https://labkom-smpitjlc2.vercel.app/healthz

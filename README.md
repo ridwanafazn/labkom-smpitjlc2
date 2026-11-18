@@ -98,6 +98,15 @@ requests.post(
 
 Ganti TOKEN, domain, dan SECRET sesuai environment. Setelah webhook aktif, admin dapat menyetujui atau menolak pengajuan langsung dari Telegram.
 
+## Optimasi performa
+
+- Pustaka QR hanya dimuat saat halaman scanner dibuka.
+- URL aset statis memakai versi deploy dan cache satu tahun.
+- Foto memakai cache privat satu tahun karena nama file selalu unik.
+- Pengajuan mengirim pesan dan foto dalam satu panggilan Telegram.
+- Foto penyelesaian dikirim paralel, bukan berurutan.
+- Workflow GitHub Actions memanggil `/healthz` selama jam sekolah untuk mengurangi cold start.
+
 ## Test
 
 ```powershell

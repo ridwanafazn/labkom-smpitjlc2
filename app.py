@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
@@ -41,6 +42,24 @@ from werkzeug.utils import secure_filename
 ROOT = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(ROOT, ".env"))
 
+
+def _asset_version():
+    """Versi URL aset statis agar cache panjang aman saat deploy baru."""
+    commit = os.environ.get("VERCEL_GIT_COMMIT_SHA", "").strip()
+    if commit:
+        return commit[:12]
+    latest = 0
+    static_dir = os.path.join(ROOT, "static")
+    for dirpath, _, filenames in os.walk(static_dir):
+        for filename in filenames:
+            try:
+                latest = max(latest, os.path.getmtime(os.path.join(dirpath, filename)))
+            except OSError:
+                continue
+    return str(int(latest))
+
+
+ASSET_VERSION = _asset_version()
 ON_VERCEL = bool(os.environ.get("VERCEL"))
 RUNTIME_DIR = "/tmp" if ON_VERCEL else ROOT
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
@@ -88,6 +107,7 @@ app.config.update(
     MAX_CONTENT_LENGTH=MAX_UPLOAD_MB * 1024 * 1024,
     MAX_FORM_MEMORY_SIZE=2 * 1024 * 1024,
     WTF_CSRF_TIME_LIMIT=8 * 60 * 60,
+    SEND_FILE_MAX_AGE_DEFAULT=31536000,
 )
 csrf = CSRFProtect(app)
 
@@ -600,6 +620,36 @@ def telegram_configured():
     )
 
 
+def telegram_send_photo(filename, data, content_type, caption, reply_markup=None):
+    """Kirim satu foto dengan caption. Dipakai agar pengajuan hanya satu panggilan API."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        return False, "Telegram belum dikonfigurasi."
+    try:
+        payload = {"chat_id": chat_id, "caption": str(caption or "")[:1024]}
+        if reply_markup:
+            payload["reply_markup"] = json.dumps(reply_markup)
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendPhoto",
+            data=payload,
+            files={"photo": (filename, data, content_type)},
+            timeout=20,
+        )
+        response.raise_for_status()
+        result = response.json()
+        if not result.get("ok"):
+            return False, "Telegram menolak foto."
+        app.logger.info(
+            "Telegram foto terkirim message_id=%s",
+            result.get("result", {}).get("message_id"),
+        )
+        return True, "Foto Telegram terkirim."
+    except Exception as exc:
+        app.logger.warning("Telegram foto gagal: %s", type(exc).__name__)
+        return False, "Gagal mengirim foto Telegram."
+
+
 def telegram_send(message, photo_fields=None, reply_markup=None):
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -656,13 +706,29 @@ def telegram_notify(loan):
         f"Waktu mulai: {loan['waktu_mulai']}\nEstimasi selesai: {loan['waktu_selesai']}\n"
         f"Selesai aktual: {(loan.get('returned_at') or '')[11:16] if loan.get('returned_at') else loan['waktu_selesai']}"
     )
-    return telegram_send(
-        message,
-        [
-            (loan.get("photo_before") or "", "Foto kondisi awal"),
-            (loan.get("photo_after") or "", "Foto kondisi akhir"),
-        ],
-    )
+    ok, status = telegram_send(message)
+    if not ok:
+        return False, status
+
+    photos = []
+    for field, caption in (
+        (loan.get("photo_before") or "", "Foto kondisi awal"),
+        (loan.get("photo_after") or "", "Foto kondisi akhir"),
+    ):
+        photo = get_photo(field) if field else None
+        if photo:
+            data, content_type = photo
+            photos.append((field, data, content_type, caption))
+    if not photos:
+        return True, "Notifikasi Telegram terkirim."
+
+    # Foto tidak saling bergantung, jadi dikirim bersamaan agar tidak menunggu
+    # timeout satu per satu.
+    with ThreadPoolExecutor(max_workers=len(photos)) as pool:
+        results = list(pool.map(lambda item: telegram_send_photo(*item), photos))
+    if all(result[0] for result in results):
+        return True, "Notifikasi Telegram terkirim."
+    return False, "Pesan terkirim, tetapi salah satu foto gagal dikirim."
 
 
 def telegram_notify_request(loan):
@@ -682,11 +748,16 @@ def telegram_notify_request(loan):
             ]
         ]
     }
-    return telegram_send(
-        message,
-        [(loan.get("photo_before") or "", "Foto kondisi awal")],
-        reply_markup=keyboard,
-    )
+    photo = get_photo(loan.get("photo_before") or "")
+    if photo:
+        data, content_type = photo
+        ok, _ = telegram_send_photo(
+            loan["photo_before"], data, content_type, message, keyboard
+        )
+        if ok:
+            return True, "Notifikasi Telegram terkirim."
+    # Jika foto tidak ada atau gagal, teks dan tombol tetap dikirim.
+    return telegram_send(message, reply_markup=keyboard)
 
 
 def telegram_notify_decision(loan, decision):
@@ -944,6 +1015,7 @@ def inject_user():
     return {
         "current_user": session.get("user_name", ""),
         "is_admin": session.get("role") == "admin",
+        "asset_version": ASSET_VERSION,
         # Folder /tmp di Vercel tidak persisten, sehingga fitur bersihkan data
         # hanya ditampilkan jika backup benar-benar bisa disimpan.
         "clear_enabled": not ON_VERCEL,
@@ -956,7 +1028,10 @@ def add_security_headers(response):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=()")
-    if response.mimetype == "text/html":
+    if request.endpoint == "static" and response.status_code == 200:
+        # URL aset selalu memakai ?v=ASSET_VERSION, jadi aman di-cache lama.
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif response.mimetype == "text/html":
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -1841,7 +1916,8 @@ def uploaded_photo(filename):
     data, content_type = photo
     response = Response(data, mimetype=content_type)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Cache-Control"] = "private, max-age=3600"
+    # Nama file foto selalu unik dan tidak pernah ditimpa.
+    response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
     return response
 
 
