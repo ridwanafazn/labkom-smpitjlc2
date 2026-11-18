@@ -6,7 +6,10 @@ function showView(id, button) {
   if (!target) return;
   document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view === target));
   document.querySelectorAll(".nav-item").forEach((item) => {
-    item.classList.toggle("active", item.dataset.view === id);
+    const current = item.dataset.view === id;
+    item.classList.toggle("active", current);
+    if (current) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
   });
   if (id !== "murid") stopScanner();
   if (window.location.hash !== "#" + id) {
