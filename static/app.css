@@ -298,6 +298,20 @@ td small { display: block; color: var(--muted); font-size: 11px; }
   .inline-form, .inline-form.three { grid-template-columns: minmax(0, 1fr); }
   .inline-form .btn { width: 100%; }
   .table-wrap table { min-width: 640px; }
+  .table-actions th:last-child,
+  .table-actions td:last-child {
+    position: sticky; right: 0; z-index: 1;
+    background: var(--surface);
+    box-shadow: -8px 0 12px rgba(17, 17, 17, 0.06);
+  }
+  .table-actions th:last-child { background: #f4f4f1; z-index: 2; }
+  .table-actions tbody tr:hover td:last-child { background: #fbfbf9; }
+  .table-wrap table.table-compact { min-width: 100%; }
+  .table-actions.table-compact th:last-child,
+  .table-actions.table-compact td:last-child {
+    position: static; box-shadow: none; background: transparent;
+  }
+  .table-actions.table-compact th:last-child { background: #f4f4f1; }
   .auth-shell { grid-template-columns: 1fr; }
   .auth-aside { display: none; }
   .auth-panel { padding: 24px; }
