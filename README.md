@@ -72,9 +72,12 @@ COOKIE_SECURE=1
 MAX_UPLOAD_MB=4
 TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID
+TELEGRAM_WEBHOOK_SECRET
 ```
 
 `vercel.json` mengarahkan function ke region `sin1`. File `.python-version` memakai Python 3.14.
+
+Di Vercel, folder `/tmp` tidak persisten. Karena itu tombol Bersihkan data dinonaktifkan di deployment Vercel dan riwayat tidak dapat dihapus dari aplikasi. Gunakan snapshot Neon untuk pemulihan. Fitur bersihkan tetap tersedia saat aplikasi dijalankan di server sendiri dengan penyimpanan permanen.
 
 ## Persetujuan lewat Telegram
 

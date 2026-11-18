@@ -267,6 +267,29 @@ def test_teacher_borrowing_accepts_multiple_classes(client):
     assert [row["kelas"] for row in classes] == ["9A", "9B"]
 
 
+@pytest.mark.parametrize("jumlah", ["0", "-5", "1001", "abc"])
+def test_teacher_booking_rejects_invalid_student_count(client, jumlah):
+    add_teacher("Guru A")
+    login(client, "Guru A", "teacher")
+    response = client.post(
+        "/borrow/teacher",
+        data={
+            "kelas": "9A",
+            "jumlah_murid": jumlah,
+            "lab": "Labkom 1",
+            "tanggal": "2099-01-01",
+            "waktu_mulai": "10:00",
+            "waktu_selesai": "11:00",
+            "photo_before": (io.BytesIO(jpeg_bytes()), "awal.jpg"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert b"Jumlah murid harus antara 1 sampai 1000" in response.data
+    with labkom.db() as c:
+        assert c.execute("SELECT COUNT(*) n FROM loans").fetchone()["n"] == 0
+
+
 def test_past_booking_date_is_rejected(client):
     add_teacher("Guru A")
     login(client, "Guru A", "teacher")
@@ -383,6 +406,27 @@ def test_backup_before_clear(client):
         assert "labkom.db" in names
         assert "uploads_labkom/foto.jpg" in names
     assert os.listdir(labkom.UPLOAD_DIR) == []
+
+
+def test_clear_is_disabled_on_vercel(client, monkeypatch):
+    monkeypatch.setattr(labkom, "ON_VERCEL", True)
+    insert_loan(photo_before="foto.jpg")
+    with open(os.path.join(labkom.UPLOAD_DIR, "foto.jpg"), "wb") as f:
+        f.write(b"foto")
+    login(client)
+    response = client.post(
+        "/admin/clear-loans",
+        data={"confirmation": "BERSIHKAN"},
+        follow_redirects=True,
+    )
+    assert b"dinonaktifkan di Vercel" in response.data
+    with labkom.db() as c:
+        assert c.execute("SELECT COUNT(*) n FROM loans").fetchone()["n"] == 1
+    assert not [
+        n
+        for n in (os.listdir(labkom.BACKUP_DIR) if os.path.isdir(labkom.BACKUP_DIR) else [])
+        if n.endswith(".zip")
+    ]
 
 
 def test_backup_retention(client, monkeypatch):
@@ -520,6 +564,16 @@ def test_telegram_webhook_rejects_wrong_chat(client, monkeypatch):
     assert response.status_code == 200
     with labkom.db() as c:
         assert c.execute("SELECT status FROM loans WHERE id=?", (pending,)).fetchone()["status"] == "Menunggu"
+
+
+def test_telegram_webhook_rejects_non_ascii_secret(client, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret")
+    response = client.post(
+        "/telegram/webhook",
+        json={},
+        headers={"X-Telegram-Bot-Api-Secret-Token": "s\u00e9cret"},
+    )
+    assert response.status_code == 403
 
 
 def test_healthz(client):

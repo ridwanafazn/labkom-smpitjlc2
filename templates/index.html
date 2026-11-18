@@ -55,8 +55,8 @@
       </div>
     </div>
     <div class="table-wrap">
-      <table>
-        <thead><tr><th>Nama</th><th>Jenis</th><th>Kelas</th><th>Lab</th><th>Waktu</th><th>Status</th><th></th></tr></thead>
+      <table class="table-actions">
+        <thead><tr><th>Nama</th><th>Jenis</th><th>Kelas</th><th>Lab</th><th>Waktu</th><th>Status</th><th><span class="sr-only">Aksi</span></th></tr></thead>
         <tbody>
           {% for l in active_loans %}
           <tr>
@@ -132,7 +132,7 @@
         </div>
         <div class="field">
           <label for="guru-jumlah">Jumlah murid <span class="required">wajib</span></label>
-          <input id="guru-jumlah" name="jumlah_murid" type="number" min="0" value="0" required>
+          <input id="guru-jumlah" name="jumlah_murid" type="number" min="1" max="1000" placeholder="Contoh: 30" required>
         </div>
         <div class="field">
           <label for="guru-lab">Lab <span class="required">wajib</span></label>
@@ -240,8 +240,8 @@
   </div>
   <section class="panel">
     <div class="table-wrap">
-      <table id="historyTable">
-        <thead><tr><th>Peminjam</th><th>Jenis</th><th>Lab</th><th>Jadwal</th><th>Status</th><th></th></tr></thead>
+      <table id="historyTable" class="table-actions">
+        <thead><tr><th>Peminjam</th><th>Jenis</th><th>Lab</th><th>Jadwal</th><th>Status</th><th><span class="sr-only">Aksi</span></th></tr></thead>
         <tbody>
           {% for l in loans %}
           <tr data-search="{{ (l.nama ~ ' ' ~ l.kelas ~ ' ' ~ l.lab ~ ' ' ~ l.status ~ ' ' ~ l.peminjam_type)|lower }}">
@@ -310,17 +310,17 @@
       <span class="tag">{{ pending_loans|length }} pengajuan</span>
     </div>
     <div class="table-wrap">
-      <table>
+      <table class="pending-table">
         <thead><tr><th>Peminjam</th><th>Kelas</th><th>Lab</th><th>Jadwal</th><th>Foto</th><th>Aksi</th></tr></thead>
         <tbody>
           {% for l in pending_loans %}
           <tr>
-            <td><strong>{{ l.nama }}</strong><small class="muted">{{ l.jumlah_murid }} murid · diajukan {{ l.created_at[:16].replace('T', ' ') }}</small></td>
-            <td>{{ l.kelas or '-' }}</td>
-            <td><span class="tag">{{ l.lab }}</span></td>
-            <td><strong>{{ l.tanggal }}</strong><small class="muted">{{ l.waktu_mulai }} sampai {{ l.waktu_selesai }}</small></td>
-            <td>{% if l.photo_before %}<a class="btn btn-secondary btn-small" href="{{ url_for('loan_photos', loan_id=l.id) }}">Foto</a>{% else %}<span class="muted">-</span>{% endif %}</td>
-            <td>
+            <td data-label="Peminjam"><strong>{{ l.nama }}</strong><small class="muted">{{ l.jumlah_murid }} murid · diajukan {{ l.created_at[:16].replace('T', ' ') }}</small></td>
+            <td data-label="Kelas">{{ l.kelas or '-' }}</td>
+            <td data-label="Lab"><span class="tag">{{ l.lab }}</span></td>
+            <td data-label="Jadwal"><strong>{{ l.tanggal }}</strong><small class="muted">{{ l.waktu_mulai }} sampai {{ l.waktu_selesai }}</small></td>
+            <td data-label="Foto">{% if l.photo_before %}<a class="btn btn-secondary btn-small" href="{{ url_for('loan_photos', loan_id=l.id) }}">Foto</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+            <td data-label="Aksi">
               <div class="row-actions">
                 <form method="post" action="{{ url_for('approve_loan', loan_id=l.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -356,7 +356,7 @@
         <button class="btn btn-primary" type="submit">Simpan</button>
       </form>
       <div class="table-wrap">
-        <table>
+        <table class="table-actions table-compact">
           <thead><tr><th>Nama guru</th><th>Aksi</th></tr></thead>
           <tbody>
             {% for t in teachers %}
@@ -389,7 +389,7 @@
         <span class="tag">{{ inactive_teachers|length }} nonaktif</span>
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="table-actions table-compact">
           <thead><tr><th>Nama guru</th><th>Aksi</th></tr></thead>
           <tbody>
             {% for t in inactive_teachers %}
@@ -429,8 +429,8 @@
         <button class="btn btn-primary" type="submit">Simpan</button>
       </form>
       <div class="table-wrap table-tall">
-        <table>
-          <thead><tr><th>NIS</th><th>Nama</th><th>Kelas</th><th></th></tr></thead>
+        <table class="table-actions table-compact">
+          <thead><tr><th>NIS</th><th>Nama</th><th>Kelas</th><th><span class="sr-only">Aksi</span></th></tr></thead>
           <tbody>
             {% for s in students %}
             <tr>
@@ -465,6 +465,7 @@
     <div class="divider"></div>
     <div class="section-head">
       <div><strong>Bersihkan data uji coba</strong><p class="muted">Riwayat dan foto dihapus. Sistem membuat backup terlebih dahulu.</p></div>
+      {% if clear_enabled %}
       <form action="{{ url_for('clear_all_loans') }}" method="post" onsubmit="return confirmClearLoans(this)">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="section" value="admin">
@@ -473,6 +474,9 @@
           <button class="btn btn-danger" type="submit">Bersihkan</button>
         </div>
       </form>
+      {% else %}
+      <p class="hint">Dinonaktifkan di Vercel karena backup tidak persisten. Gunakan snapshot Neon.</p>
+      {% endif %}
     </div>
   </section>
 </section>

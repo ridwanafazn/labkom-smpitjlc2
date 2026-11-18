@@ -13,7 +13,8 @@ function showView(id, button) {
   });
   if (id !== "murid") stopScanner();
   if (window.location.hash !== "#" + id) {
-    history.replaceState(null, "", id === "dashboard" ? window.location.pathname : "#" + id);
+    const base = window.location.pathname + window.location.search;
+    history.replaceState(null, "", id === "dashboard" ? base : "#" + id);
   }
   if (window.matchMedia("(max-width: 760px)").matches) toggleSidebar(false);
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -27,9 +28,13 @@ function goView(id) {
 function updateMenuButton(open) {
   const button = document.getElementById("menuButton");
   if (!button) return;
-  button.classList.toggle("is-open", open);
+  const mobile = window.matchMedia("(max-width: 760px)").matches;
+  button.classList.toggle("is-open", mobile && open);
   button.setAttribute("aria-expanded", open ? "true" : "false");
-  button.setAttribute("aria-label", open ? "Tutup menu" : "Buka menu");
+  button.setAttribute(
+    "aria-label",
+    mobile ? (open ? "Tutup menu" : "Buka menu") : (open ? "Sembunyikan menu" : "Tampilkan menu")
+  );
 }
 
 function toggleSidebar(force) {
@@ -65,6 +70,21 @@ window.addEventListener("resize", () => {
     backdrop?.classList.remove("show");
     updateMenuButton(!app.classList.contains("sidebar-collapsed"));
   }
+});
+
+window.addEventListener("hashchange", () => {
+  const id = window.location.hash.replace("#", "");
+  if (!id || !document.getElementById("view-" + id)) return;
+  const button = document.querySelector('.nav-item[data-view="' + id + '"]');
+  showView(id, button);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar?.classList.contains("open")) return;
+  toggleSidebar(false);
+  document.getElementById("menuButton")?.focus();
 });
 
 function syncBookingTimeMin() {

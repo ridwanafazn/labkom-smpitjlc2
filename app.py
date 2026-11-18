@@ -1,6 +1,7 @@
 import base64
 import csv
 import glob
+import hmac
 import io
 import json
 import logging
@@ -306,7 +307,9 @@ def _ensure_teachers_schema(c):
 
 
 def init_db():
-    with db() as c:
+    # Di PostgreSQL, serialisasi inisialisasi antar-instance Vercel agar
+    # migrasi dan pembuatan akun admin tidak saling menabrak saat cold start.
+    with db(immediate=USE_POSTGRES) as c:
         if not USE_POSTGRES:
             c.execute("PRAGMA journal_mode=WAL")
         id_column = "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -408,26 +411,34 @@ def init_db():
                 admin_row = row
                 break
         if admin_row:
+            admin_id = admin_row["id"]
             if admin_hash:
                 c.execute(
                     "UPDATE teachers SET nama=?,aktif=1,role='admin',password_hash=? WHERE id=?",
-                    (ADMIN_NAME, admin_hash, admin_row["id"]),
+                    (ADMIN_NAME, admin_hash, admin_id),
                 )
             else:
                 c.execute(
                     "UPDATE teachers SET nama=?,aktif=1,role='admin' WHERE id=?",
-                    (ADMIN_NAME, admin_row["id"]),
+                    (ADMIN_NAME, admin_id),
                 )
         else:
-            c.execute(
+            admin_id = c.execute(
                 "INSERT INTO teachers(nama,aktif,created_at,password_hash,role) "
-                "VALUES(?,1,?,?,'admin')",
+                "VALUES(?,1,?,?,'admin') RETURNING id",
                 (
                     ADMIN_NAME,
                     datetime.now(WIB).isoformat(timespec="seconds"),
                     admin_hash,
                 ),
-            )
+            ).fetchone()["id"]
+        # Hanya satu akun admin yang berasal dari ADMIN_NAME. Jika nama admin
+        # diganti, akun admin lama diturunkan menjadi guru agar tidak menyisakan
+        # akses admin dengan password lama.
+        c.execute(
+            "UPDATE teachers SET role='teacher' WHERE role='admin' AND id<>?",
+            (admin_id,),
+        )
 
         count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
         if count == 0 and os.path.exists(STUDENTS_PATH):
@@ -823,7 +834,10 @@ def healthz():
 @csrf.exempt
 def telegram_webhook():
     secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
-    if not secret or request.headers.get("X-Telegram-Bot-Api-Secret-Token") != secret:
+    supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not secret or not hmac.compare_digest(
+        supplied.encode("utf-8"), secret.encode("utf-8")
+    ):
         abort(403)
     update = request.get_json(silent=True) or {}
     callback = update.get("callback_query")
@@ -907,7 +921,7 @@ def telegram_webhook():
 @app.before_request
 def require_login():
     public = {"login", "static", "healthz", "telegram_webhook"}
-    if request.endpoint in public:
+    if request.endpoint in public or request.path == "/telegram/webhook":
         return None
     if "user_name" not in session:
         return redirect(url_for("login"))
@@ -930,6 +944,9 @@ def inject_user():
     return {
         "current_user": session.get("user_name", ""),
         "is_admin": session.get("role") == "admin",
+        # Folder /tmp di Vercel tidak persisten, sehingga fitur bersihkan data
+        # hanya ditampilkan jika backup benar-benar bisa disimpan.
+        "clear_enabled": not ON_VERCEL,
     }
 
 
@@ -1474,6 +1491,9 @@ def borrow_teacher():
         jumlah = int(jumlah)
     except (TypeError, ValueError):
         jumlah = 0
+    if jumlah < 1 or jumlah > 1000:
+        flash("Jumlah murid harus antara 1 sampai 1000.", "error")
+        return redirect_section("guru")
     kelas = ", ".join(classes)
     with db(immediate=True) as c:
         # Cek bentrok dulu supaya foto tidak tersimpan sebagai file yatim.
@@ -1681,7 +1701,7 @@ def _write_pg_backup(backup_path):
     with db() as c:
         tables = {
             table: [dict(row) for row in c.execute(f"SELECT * FROM {table}").fetchall()]
-            for table in ("loans", "teachers", "students")
+            for table in ("loans", "loan_classes", "teachers", "students")
         }
         photos = c.execute("SELECT filename,content_type,data FROM photos").fetchall()
     with _open_backup_archive(backup_path) as archive:
@@ -1697,6 +1717,13 @@ def _write_pg_backup(backup_path):
 def clear_all_loans():
     if session.get("role") != "admin":
         abort(403)
+    if ON_VERCEL:
+        flash(
+            "Pembersihan dinonaktifkan di Vercel karena folder backup bersifat sementara. "
+            "Gunakan snapshot Neon untuk pemulihan data.",
+            "error",
+        )
+        return redirect_section("admin")
     if request.form.get("confirmation", "").strip() != "BERSIHKAN":
         flash("Penghapusan dibatalkan. Konfirmasi tidak sesuai.", "error")
         return redirect_section("admin")

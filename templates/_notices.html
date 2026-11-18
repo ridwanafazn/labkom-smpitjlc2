@@ -1,6 +1,6 @@
 {% with messages = get_flashed_messages(with_categories=true) %}
 {% if messages %}
-<div class="notices">
+<div class="notices" role="status" aria-live="polite">
   {% for category, message in messages %}
   <div class="notice notice-{{ category }}">
     <span>{{ message }}</span>

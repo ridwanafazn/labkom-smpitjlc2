@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block body_class %}app-body{% endblock %}
 {% block body %}
+<a class="skip-link" href="#main-content">Lewati ke konten utama</a>
 <div class="app">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
@@ -12,7 +13,7 @@
     </div>
     <nav class="nav" aria-label="Navigasi utama">
       <p class="nav-label">Menu</p>
-      <button type="button" class="nav-item active" data-view="dashboard" onclick="showView('dashboard', this)">Dashboard</button>
+      <button type="button" class="nav-item active" data-view="dashboard" aria-current="page" onclick="showView('dashboard', this)">Dashboard</button>
       <button type="button" class="nav-item" data-view="guru" onclick="showView('guru', this)">Peminjaman guru</button>
       <button type="button" class="nav-item" data-view="murid" onclick="showView('murid', this)">Scan QR murid</button>
       <p class="nav-label">Data</p>
@@ -35,14 +36,14 @@
 
   <div class="main">
     <header class="topbar">
-      <button type="button" class="menu-button" id="menuButton" onclick="toggleSidebar()" aria-label="Buka menu" aria-expanded="false">
+      <button type="button" class="menu-button" id="menuButton" onclick="toggleSidebar()" aria-label="Buka menu" aria-expanded="false" aria-controls="sidebar">
         <svg class="menu-icon-open" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         <svg class="menu-icon-close" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
       <span class="topbar-title">Sistem Peminjaman</span>
       <span class="topbar-user">{{ current_user }}</span>
     </header>
-    <main class="content">
+    <main class="content" id="main-content" tabindex="-1">
       {% include "_notices.html" %}
       {% block content %}{% endblock %}
     </main>
