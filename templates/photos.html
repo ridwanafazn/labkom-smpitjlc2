@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Dokumentasi foto - Labkom{% endblock %}
+{% block body_class %}photos-body{% endblock %}
+{% block body %}
+<main class="photos-shell">
+  <a class="back-link" href="{{ url_for('index', _anchor='riwayat') }}">Kembali ke riwayat</a>
+  {% include "_notices.html" %}
+
+  <section class="panel photos-card">
+    <div class="page-head compact">
+      <div>
+        <h1>Dokumentasi foto</h1>
+        <p class="muted">Kondisi Labkom sebelum dan sesudah peminjaman.</p>
+      </div>
+      <span class="tag {% if loan.status == 'Selesai' %}tag-success{% else %}tag-warning{% endif %}">{{ loan.status }}</span>
+    </div>
+
+    <div class="detail-grid">
+      <div><span>Nama</span><strong>{{ loan.nama }}</strong></div>
+      <div><span>Jenis</span><strong>{{ loan.peminjam_type }}</strong></div>
+      <div><span>Lab</span><strong>{{ loan.lab }}</strong></div>
+      <div><span>Tanggal</span><strong>{{ loan.tanggal }}</strong></div>
+      <div><span>Waktu mulai</span><strong>{{ loan.waktu_mulai }}</strong></div>
+      <div><span>Estimasi selesai</span><strong>{{ loan.waktu_selesai }}</strong></div>
+    </div>
+
+    <div class="photo-grid">
+      <article class="photo-item">
+        <h2>Kondisi awal</h2>
+        {% if photos.photo_before %}
+        <a href="{{ url_for('uploaded_photo', filename=photos.photo_before.filename) }}" target="_blank" rel="noopener">
+          <img src="{{ url_for('uploaded_photo', filename=photos.photo_before.filename) }}" alt="Foto kondisi awal {{ loan.lab }}" loading="lazy">
+        </a>
+        <p class="hint">{{ photos.photo_before.size_kb }} KB · {{ loan.created_at[:16].replace('T', ' ') }}</p>
+        {% else %}
+        <div class="photo-empty">Foto kondisi awal tidak tersedia.</div>
+        {% endif %}
+      </article>
+
+      <article class="photo-item">
+        <h2>Kondisi akhir</h2>
+        {% if photos.photo_after %}
+        <a href="{{ url_for('uploaded_photo', filename=photos.photo_after.filename) }}" target="_blank" rel="noopener">
+          <img src="{{ url_for('uploaded_photo', filename=photos.photo_after.filename) }}" alt="Foto kondisi akhir {{ loan.lab }}" loading="lazy">
+        </a>
+        <p class="hint">{{ photos.photo_after.size_kb }} KB · {{ loan.returned_at[:16].replace('T', ' ') }}</p>
+        {% else %}
+        <div class="photo-empty">
+          {% if loan.status == 'Selesai' %}
+          Foto kondisi akhir tidak tersedia.
+          {% else %}
+          Foto kondisi akhir belum diunggah.
+          {% endif %}
+        </div>
+        {% endif %}
+      </article>
+    </div>
+  </section>
+</main>
+{% endblock %}

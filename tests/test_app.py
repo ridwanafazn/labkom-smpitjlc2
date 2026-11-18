@@ -554,6 +554,24 @@ def test_custom_404_page(client):
     assert b"Halaman tidak ditemukan" in response.data
 
 
+def test_photo_documentation_page_checks_ownership(client):
+    add_teacher("Guru A")
+    add_teacher("Guru B")
+    with open(os.path.join(labkom.UPLOAD_DIR, "a.jpg"), "wb") as f:
+        f.write(b"a")
+    with open(os.path.join(labkom.UPLOAD_DIR, "b.jpg"), "wb") as f:
+        f.write(b"b")
+    loan_a = insert_loan(created_by="Guru A", photo_before="a.jpg", photo_after="a.jpg")
+    loan_b = insert_loan(created_by="Guru B", photo_before="b.jpg", photo_after="b.jpg")
+
+    login(client, "Guru A", "teacher")
+    assert client.get(f"/loan/{loan_a}/photos").status_code == 200
+    assert client.get(f"/loan/{loan_b}/photos").status_code == 403
+
+    login(client)
+    assert client.get(f"/loan/{loan_b}/photos").status_code == 200
+
+
 def test_pagination(client):
     for i in range(55):
         insert_loan(nama=f"Guru {i}")

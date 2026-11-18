@@ -1461,6 +1461,31 @@ def clear_all_loans():
     return redirect_section("admin")
 
 
+@app.route("/loan/<int:loan_id>/photos")
+def loan_photos(loan_id):
+    with db() as c:
+        row = c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone()
+    if not row:
+        abort(404)
+    loan = dict(row)
+    if session.get("role") != "admin" and loan.get("created_by") != session.get("user_name"):
+        abort(403)
+    photos = {}
+    for field in ("photo_before", "photo_after"):
+        filename = loan.get(field) or ""
+        if not filename:
+            continue
+        photo = get_photo(filename)
+        if photo:
+            data, content_type = photo
+            photos[field] = {
+                "filename": filename,
+                "content_type": content_type,
+                "size_kb": max(1, len(data) // 1024),
+            }
+    return render_template("photos.html", loan=loan, photos=photos)
+
+
 @app.route("/uploads_labkom/<path:filename>")
 def uploaded_photo(filename):
     filename = os.path.basename(filename)

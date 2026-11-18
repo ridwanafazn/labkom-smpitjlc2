@@ -21,6 +21,14 @@
       <div><span>Estimasi selesai</span><strong>{{ loan.waktu_selesai }}</strong></div>
     </div>
 
+    {% if loan.photo_before %}
+    <div class="divider"></div>
+    <p class="muted">Foto kondisi awal</p>
+    <a href="{{ url_for('uploaded_photo', filename=loan.photo_before) }}" target="_blank" rel="noopener">
+      <img class="before-photo" src="{{ url_for('uploaded_photo', filename=loan.photo_before) }}" alt="Foto kondisi awal {{ loan.lab }}" loading="lazy">
+    </a>
+    {% endif %}
+
     {% if loan.peminjam_type == 'Guru' %}
     <div class="divider"></div>
     <p class="muted">Unggah foto kondisi akhir Labkom. Foto kondisi awal sudah tercatat pada transaksi.</p>

@@ -37,7 +37,12 @@
             <td>{{ l.kelas or '-' }}</td>
             <td><span class="tag">{{ l.lab }}</span></td>
             <td>{{ l.waktu_mulai }} sampai {{ l.waktu_selesai }}</td>
-            <td><a class="btn btn-secondary btn-small" href="{{ url_for('return_loan', loan_id=l.id) }}">Selesaikan</a></td>
+            <td>
+              <div class="row-actions">
+                {% if l.photo_before or l.photo_after %}<a class="btn btn-secondary btn-small" href="{{ url_for('loan_photos', loan_id=l.id) }}">Foto</a>{% endif %}
+                <a class="btn btn-secondary btn-small" href="{{ url_for('return_loan', loan_id=l.id) }}">Selesaikan</a>
+              </div>
+            </td>
           </tr>
           {% else %}
           <tr><td colspan="6"><div class="empty">Belum ada peminjaman aktif.</div></td></tr>
@@ -228,11 +233,11 @@
               {% endif %}
             </td>
             <td>
-              {% if l.status != 'Selesai' %}
-              <a class="btn btn-secondary btn-small" href="{{ url_for('return_loan', loan_id=l.id) }}">Selesaikan</a>
-              {% else %}
-              <span class="muted">-</span>
-              {% endif %}
+              <div class="row-actions">
+                {% if l.photo_before or l.photo_after %}<a class="btn btn-secondary btn-small" href="{{ url_for('loan_photos', loan_id=l.id) }}">Foto</a>{% endif %}
+                {% if l.status != 'Selesai' %}<a class="btn btn-secondary btn-small" href="{{ url_for('return_loan', loan_id=l.id) }}">Selesaikan</a>{% endif %}
+                {% if not l.photo_before and not l.photo_after and l.status == 'Selesai' %}<span class="muted">-</span>{% endif %}
+              </div>
             </td>
           </tr>
           {% else %}
