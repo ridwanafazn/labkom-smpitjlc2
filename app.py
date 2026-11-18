@@ -601,8 +601,13 @@ def telegram_send(message, photo_fields=None):
             timeout=8,
         )
         response.raise_for_status()
-        if not response.json().get("ok"):
+        payload = response.json()
+        if not payload.get("ok"):
             return False, "Telegram menolak pesan."
+        app.logger.info(
+            "Telegram pesan terkirim message_id=%s",
+            payload.get("result", {}).get("message_id"),
+        )
         for field, caption in photo_fields or []:
             filename = field or ""
             photo = get_photo(filename) if filename else None
@@ -616,8 +621,13 @@ def telegram_send(message, photo_fields=None):
                 timeout=20,
             )
             photo_response.raise_for_status()
-            if not photo_response.json().get("ok"):
+            photo_payload = photo_response.json()
+            if not photo_payload.get("ok"):
                 return False, "Pesan terkirim, tetapi salah satu foto gagal dikirim."
+            app.logger.info(
+                "Telegram foto terkirim message_id=%s",
+                photo_payload.get("result", {}).get("message_id"),
+            )
         return True, "Notifikasi Telegram terkirim."
     except Exception as exc:
         app.logger.warning("Telegram gagal: %s", type(exc).__name__)
