@@ -64,6 +64,50 @@ window.addEventListener("resize", () => {
   }
 });
 
+function syncBookingTimeMin() {
+  const date = document.getElementById("guru-tanggal");
+  const start = document.getElementById("guru-mulai");
+  const end = document.getElementById("guru-selesai");
+  if (!date || !start || !end) return;
+  const min = date.value === date.dataset.today ? date.dataset.now : "";
+  start.min = min;
+  end.min = start.value || min;
+}
+
+async function loadLabSchedule(lab) {
+  const box = document.getElementById("labSchedule");
+  if (!box) return;
+  if (!lab) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = '<p class="hint">Memuat jadwal...</p>';
+  try {
+    const response = await fetch("/api/bookings?lab=" + encodeURIComponent(lab));
+    const rows = await response.json();
+    if (!response.ok) throw new Error(rows.error || "Gagal memuat jadwal");
+    if (!rows.length) {
+      box.innerHTML = '<p class="hint">Belum ada jadwal terbooking di ' + escapeHtml(lab) + '.</p>';
+      return;
+    }
+    const body = rows.map((row) =>
+      "<tr><td>" + escapeHtml(row.tanggal) + "</td><td>" +
+      escapeHtml(row.waktu_mulai) + " sampai " + escapeHtml(row.waktu_selesai) +
+      "</td><td>" + escapeHtml(row.nama) + "</td><td>" +
+      escapeHtml(row.peminjam_type) + "</td><td>" +
+      escapeHtml(row.kelas || "-") + "</td></tr>"
+    ).join("");
+    box.innerHTML =
+      "<h3>Jadwal terbooking di " + escapeHtml(lab) + "</h3>" +
+      '<div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>Waktu</th><th>Peminjam</th><th>Jenis</th><th>Kelas</th></tr></thead><tbody>' +
+      body + "</tbody></table></div>";
+  } catch (error) {
+    box.innerHTML = '<p class="hint">' + escapeHtml(error.message) + "</p>";
+  }
+}
+
 function filterTable(input, tableId) {
   const query = input.value.trim().toLowerCase();
   const rows = document.querySelectorAll("#" + tableId + " tbody tr[data-search]");
@@ -195,6 +239,20 @@ document.addEventListener("DOMContentLoaded", () => {
     updateMenuButton(sidebar?.classList.contains("open") || false);
   } else {
     updateMenuButton(!app?.classList.contains("sidebar-collapsed"));
+  }
+
+  const labSelect = document.getElementById("guru-lab");
+  if (labSelect) {
+    labSelect.addEventListener("change", () => loadLabSchedule(labSelect.value));
+  }
+  const bookingDate = document.getElementById("guru-tanggal");
+  const bookingStart = document.getElementById("guru-mulai");
+  if (bookingDate) {
+    bookingDate.addEventListener("change", syncBookingTimeMin);
+    syncBookingTimeMin();
+  }
+  if (bookingStart) {
+    bookingStart.addEventListener("change", syncBookingTimeMin);
   }
 
   const view = window.location.hash.replace("#", "");

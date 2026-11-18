@@ -6,6 +6,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -184,6 +185,22 @@ def table_columns(c, table):
     return {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def parse_classes(raw):
+    parts = re.split(r"[,;\n]+", raw or "")
+    classes = []
+    seen = set()
+    for part in parts:
+        name = " ".join(part.strip().split())
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        classes.append(name)
+    return classes
+
+
 def _loan_ref_count(c, name):
     row = c.execute(
         "SELECT COUNT(*) n FROM loans WHERE created_by=? OR completed_by=?",
@@ -326,6 +343,23 @@ def init_db():
             "UPDATE loans SET created_by=nama "
             "WHERE peminjam_type='Guru' AND (created_by IS NULL OR created_by='')"
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS loan_classes (
+            loan_id INTEGER NOT NULL,
+            kelas TEXT NOT NULL,
+            PRIMARY KEY (loan_id, kelas)
+        )"""
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_loan_classes_loan ON loan_classes(loan_id)"
+        )
+        for loan in c.execute("SELECT id,kelas FROM loans").fetchall():
+            for class_name in parse_classes(loan["kelas"]):
+                c.execute(
+                    "INSERT INTO loan_classes(loan_id,kelas) VALUES(?,?) "
+                    "ON CONFLICT (loan_id,kelas) DO NOTHING",
+                    (loan["id"], class_name),
+                )
         _ensure_teachers_schema(c)
         c.execute(
             """CREATE TABLE IF NOT EXISTS students (
@@ -860,6 +894,29 @@ def delete_teacher(teacher_id):
     return redirect_section("admin")
 
 
+@app.route("/admin/teachers/<int:teacher_id>/activate", methods=["POST"])
+def activate_teacher(teacher_id):
+    if session.get("role") != "admin":
+        abort(403)
+    with db() as c:
+        teacher = c.execute(
+            "SELECT nama,role FROM teachers WHERE id=?", (teacher_id,)
+        ).fetchone()
+        if not teacher:
+            flash("Akun guru tidak ditemukan.", "error")
+            return redirect_section("admin")
+        if teacher["role"] == "admin":
+            flash("Akun admin tidak perlu diaktifkan.", "error")
+            return redirect_section("admin")
+        c.execute("UPDATE teachers SET aktif=1 WHERE id=?", (teacher_id,))
+        teacher_name = teacher["nama"]
+    app.logger.info(
+        "AUDIT aktifkan guru=%s oleh=%s", teacher_name, session.get("user_name")
+    )
+    flash("Akun guru diaktifkan kembali.", "success")
+    return redirect_section("admin")
+
+
 @app.route("/admin/students", methods=["POST"])
 def manage_students():
     if session.get("role") != "admin":
@@ -936,6 +993,10 @@ def index():
                 "SELECT id,nama FROM teachers "
                 "WHERE aktif=1 AND role='teacher' ORDER BY nama"
             ).fetchall()
+            inactive_teachers = c.execute(
+                "SELECT id,nama FROM teachers "
+                "WHERE aktif=0 AND role='teacher' ORDER BY nama"
+            ).fetchall()
             students = c.execute(
                 "SELECT nis,nama,kelas FROM students ORDER BY kelas, nama"
             ).fetchall()
@@ -954,6 +1015,7 @@ def index():
                 "WHERE status='Dipinjam' ORDER BY tanggal,waktu_mulai LIMIT 100"
             ).fetchall()
             teachers = []
+            inactive_teachers = []
             students = []
         students_count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
         active = c.execute("SELECT COUNT(*) n FROM loans WHERE status='Dipinjam'").fetchone()["n"]
@@ -966,8 +1028,10 @@ def index():
         schedule=schedule,
         active_loans=active_loans,
         teachers=teachers,
+        inactive_teachers=inactive_teachers,
         students=students,
         today=datetime.now(WIB).strftime("%Y-%m-%d"),
+        now_time=datetime.now(WIB).strftime("%H:%M"),
         page=page,
         pages=pages,
         page_size=PAGE_SIZE,
@@ -982,6 +1046,23 @@ def student_lookup(nis):
     with db() as c:
         s = c.execute("SELECT nis,nama,kelas FROM students WHERE nis=?", (nis,)).fetchone()
     return (jsonify(dict(s)), 200) if s else (jsonify({"error": "NIS tidak ditemukan"}), 404)
+
+
+@app.route("/api/bookings")
+def booking_lookup():
+    lab = request.args.get("lab", "").strip()
+    if lab not in ["Labkom 1", "Labkom 2"]:
+        return jsonify({"error": "Lab tidak valid"}), 400
+    today = datetime.now(WIB).strftime("%Y-%m-%d")
+    with db() as c:
+        rows = c.execute(
+            """SELECT tanggal,waktu_mulai,waktu_selesai,nama,peminjam_type,kelas
+               FROM loans
+               WHERE lab=? AND status='Dipinjam' AND tanggal>=?
+               ORDER BY tanggal,waktu_mulai LIMIT 50""",
+            (lab, today),
+        ).fetchall()
+    return jsonify([dict(row) for row in rows])
 
 
 @app.route("/borrow/student", methods=["POST"])
@@ -1031,9 +1112,9 @@ def borrow_student():
             )
             return redirect_section("murid")
         try:
-            c.execute(
+            created = c.execute(
                 """INSERT INTO loans(peminjam_type,nama,kelas,nis,lab,tanggal,waktu_mulai,waktu_selesai,status,created_at,created_by)
-                  VALUES('Murid',?,?,?,?,?,?,?,'Dipinjam',?,?)""",
+                  VALUES('Murid',?,?,?,?,?,?,?,'Dipinjam',?,?) RETURNING id""",
                 (
                     s["nama"],
                     s["kelas"],
@@ -1045,7 +1126,13 @@ def borrow_student():
                     now.isoformat(timespec="seconds"),
                     session["user_name"],
                 ),
-            )
+            ).fetchone()
+            for class_name in parse_classes(s["kelas"]):
+                c.execute(
+                    "INSERT INTO loan_classes(loan_id,kelas) VALUES(?,?) "
+                    "ON CONFLICT (loan_id,kelas) DO NOTHING",
+                    (created["id"], class_name),
+                )
         except INTEGRITY_ERRORS:
             flash(
                 "Murid ini masih memiliki peminjaman aktif. "
@@ -1063,19 +1150,37 @@ def borrow_student():
 @app.route("/borrow/teacher", methods=["POST"])
 def borrow_teacher():
     nama = session.get("user_name", "")
-    kelas = request.form.get("kelas", "").strip()
+    kelas_raw = request.form.get("kelas", "").strip()
+    classes = parse_classes(kelas_raw)
     jumlah = request.form.get("jumlah_murid", "0").strip()
     lab = request.form.get("lab", "").strip()
     tanggal = request.form.get("tanggal", "").strip()
     mulai = request.form.get("waktu_mulai", "").strip()
     selesai = request.form.get("waktu_selesai", "").strip()
     photo_before_file = request.files.get("photo_before")
-    if (
-        not all([nama, kelas, tanggal, mulai, selesai])
-        or lab not in ["Labkom 1", "Labkom 2"]
-        or selesai <= mulai
-    ):
+
+    if not all([nama, classes, tanggal, mulai, selesai]) or lab not in ["Labkom 1", "Labkom 2"]:
         flash("Periksa kembali seluruh isian guru dan rentang waktunya.", "error")
+        return redirect_section("guru")
+    if len(classes) > 20:
+        flash("Maksimal 20 kelas dalam satu peminjaman.", "error")
+        return redirect_section("guru")
+    try:
+        booking_date = datetime.strptime(tanggal, "%Y-%m-%d").date()
+        start_time = datetime.strptime(mulai, "%H:%M").time()
+        end_time = datetime.strptime(selesai, "%H:%M").time()
+    except ValueError:
+        flash("Format tanggal atau jam tidak valid.", "error")
+        return redirect_section("guru")
+    now = datetime.now(WIB)
+    current_minute = now.time().replace(second=0, microsecond=0)
+    if booking_date < now.date() or (
+        booking_date == now.date() and start_time < current_minute
+    ):
+        flash("Tanggal dan jam peminjaman tidak boleh di masa lalu.", "error")
+        return redirect_section("guru")
+    if end_time <= start_time:
+        flash("Jam selesai harus lebih akhir dari jam mulai.", "error")
         return redirect_section("guru")
     if not photo_before_file or not photo_before_file.filename:
         flash(
@@ -1087,6 +1192,7 @@ def borrow_teacher():
         jumlah = int(jumlah)
     except (TypeError, ValueError):
         jumlah = 0
+    kelas = ", ".join(classes)
     with db(immediate=True) as c:
         # Cek bentrok dulu supaya foto tidak tersimpan sebagai file yatim.
         conflict = find_schedule_conflict(c, lab, tanggal, mulai, selesai)
@@ -1104,9 +1210,9 @@ def borrow_teacher():
             flash(str(e), "error")
             return redirect_section("guru")
         try:
-            c.execute(
+            created = c.execute(
                 """INSERT INTO loans(peminjam_type,nama,kelas,jumlah_murid,lab,tanggal,waktu_mulai,waktu_selesai,status,created_at,photo_before,created_by)
-                  VALUES('Guru',?,?,?,?,?,?,?,'Dipinjam',?,?,?)""",
+                  VALUES('Guru',?,?,?,?,?,?,?,'Dipinjam',?,?,?) RETURNING id""",
                 (
                     nama,
                     kelas,
@@ -1119,7 +1225,13 @@ def borrow_teacher():
                     photo_before,
                     nama,
                 ),
-            )
+            ).fetchone()
+            for class_name in classes:
+                c.execute(
+                    "INSERT INTO loan_classes(loan_id,kelas) VALUES(?,?) "
+                    "ON CONFLICT (loan_id,kelas) DO NOTHING",
+                    (created["id"], class_name),
+                )
         except Exception:
             remove_uploaded_photo(photo_before)
             app.logger.exception("Gagal menyimpan peminjaman guru")
@@ -1317,6 +1429,7 @@ def clear_all_loans():
 
     try:
         with db() as c:
+            c.execute("DELETE FROM loan_classes")
             c.execute("DELETE FROM loans")
             if USE_POSTGRES:
                 c.execute("DELETE FROM photos")

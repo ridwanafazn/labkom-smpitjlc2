@@ -4,6 +4,7 @@ import os
 import sqlite3
 import sys
 import zipfile
+from datetime import datetime, timedelta
 
 import pyzipper
 import pytest
@@ -219,7 +220,7 @@ def test_upload_validation_and_orphan_cleanup(client):
 
     # Foto tidak boleh tersimpan jika jadwal ternyata bentrok.
     add_teacher("Guru A")
-    insert_loan(tanggal="2026-11-06", waktu_mulai="10:00", waktu_selesai="11:00")
+    insert_loan(tanggal="2099-01-01", waktu_mulai="10:00", waktu_selesai="11:00")
     login(client, "Guru A", "teacher")
     client.post(
         "/borrow/teacher",
@@ -227,7 +228,7 @@ def test_upload_validation_and_orphan_cleanup(client):
             "kelas": "9A",
             "jumlah_murid": "10",
             "lab": "Labkom 1",
-            "tanggal": "2026-11-06",
+            "tanggal": "2099-01-01",
             "waktu_mulai": "10:30",
             "waktu_selesai": "10:45",
             "photo_before": (io.BytesIO(jpeg_bytes()), "awal.jpg"),
@@ -235,6 +236,101 @@ def test_upload_validation_and_orphan_cleanup(client):
         content_type="multipart/form-data",
     )
     assert os.listdir(labkom.UPLOAD_DIR) == []
+
+
+def test_teacher_borrowing_accepts_multiple_classes(client):
+    add_teacher("Guru A")
+    login(client, "Guru A", "teacher")
+    response = client.post(
+        "/borrow/teacher",
+        data={
+            "kelas": "9A, 9B; 9A",
+            "jumlah_murid": "40",
+            "lab": "Labkom 1",
+            "tanggal": "2099-01-01",
+            "waktu_mulai": "10:00",
+            "waktu_selesai": "11:00",
+            "photo_before": (io.BytesIO(jpeg_bytes()), "awal.jpg"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 302
+    with labkom.db() as c:
+        loan = c.execute(
+            "SELECT id,kelas FROM loans WHERE created_by='Guru A' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        classes = c.execute(
+            "SELECT kelas FROM loan_classes WHERE loan_id=? ORDER BY kelas",
+            (loan["id"],),
+        ).fetchall()
+    assert loan["kelas"] == "9A, 9B"
+    assert [row["kelas"] for row in classes] == ["9A", "9B"]
+
+
+def test_past_booking_date_is_rejected(client):
+    add_teacher("Guru A")
+    login(client, "Guru A", "teacher")
+    past = (datetime.now(labkom.WIB).date() - timedelta(days=1)).isoformat()
+    response = client.post(
+        "/borrow/teacher",
+        data={
+            "kelas": "9A",
+            "jumlah_murid": "10",
+            "lab": "Labkom 1",
+            "tanggal": past,
+            "waktu_mulai": "10:00",
+            "waktu_selesai": "11:00",
+            "photo_before": (io.BytesIO(jpeg_bytes()), "awal.jpg"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert b"tidak boleh di masa lalu" in response.data
+    with labkom.db() as c:
+        assert c.execute("SELECT COUNT(*) n FROM loans").fetchone()["n"] == 0
+
+
+def test_past_time_today_is_rejected(client):
+    add_teacher("Guru A")
+    login(client, "Guru A", "teacher")
+    now = datetime.now(labkom.WIB)
+    past_time = now - timedelta(minutes=5)
+    if past_time.date() != now.date():
+        pytest.skip("Tidak stabil tepat setelah tengah malam")
+    response = client.post(
+        "/borrow/teacher",
+        data={
+            "kelas": "9A",
+            "jumlah_murid": "10",
+            "lab": "Labkom 1",
+            "tanggal": now.date().isoformat(),
+            "waktu_mulai": past_time.strftime("%H:%M"),
+            "waktu_selesai": (now + timedelta(minutes=30)).strftime("%H:%M"),
+            "photo_before": (io.BytesIO(jpeg_bytes()), "awal.jpg"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert b"tidak boleh di masa lalu" in response.data
+    with labkom.db() as c:
+        assert c.execute("SELECT COUNT(*) n FROM loans").fetchone()["n"] == 0
+
+
+def test_booking_lookup_returns_schedule(client):
+    insert_loan(
+        nama="Guru Terjadwal",
+        lab="Labkom 1",
+        tanggal="2099-01-02",
+        waktu_mulai="09:00",
+        waktu_selesai="10:00",
+        created_by="Guru Terjadwal",
+    )
+    login(client)
+    response = client.get("/api/bookings?lab=Labkom%201")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data[0]["nama"] == "Guru Terjadwal"
+    assert data[0]["waktu_mulai"] == "09:00"
 
 
 def test_upload_size_limit(client):
@@ -247,7 +343,7 @@ def test_upload_size_limit(client):
             "kelas": "9A",
             "jumlah_murid": "10",
             "lab": "Labkom 1",
-            "tanggal": "2026-11-06",
+            "tanggal": "2099-01-01",
             "waktu_mulai": "10:30",
             "waktu_selesai": "10:45",
             "photo_before": (io.BytesIO(too_big), "besar.jpg"),
@@ -355,7 +451,8 @@ def test_deactivated_teacher_is_hidden_and_can_be_readded(client):
         follow_redirects=True,
     )
     assert response.status_code == 200
-    assert b"Guru Cuti" not in response.data
+    assert b"Guru nonaktif" in response.data
+    assert b"Aktifkan" in response.data
     with labkom.db() as c:
         row = c.execute(
             "SELECT aktif FROM teachers WHERE nama='Guru Cuti'"
@@ -363,8 +460,8 @@ def test_deactivated_teacher_is_hidden_and_can_be_readded(client):
     assert row["aktif"] == 0
 
     client.post(
-        "/admin/teachers",
-        data={"nama": "Guru Cuti", "password": "password-baru"},
+        f"/admin/teachers/{teacher['id']}/activate",
+        data={},
         follow_redirects=True,
     )
     with labkom.db() as c:

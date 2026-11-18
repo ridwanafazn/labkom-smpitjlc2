@@ -93,7 +93,8 @@
         </div>
         <div class="field">
           <label for="guru-kelas">Kelas <span class="required">wajib</span></label>
-          <input id="guru-kelas" name="kelas" required placeholder="Contoh: 9 Asiah" autocomplete="off">
+          <textarea id="guru-kelas" name="kelas" rows="2" required placeholder="Contoh: 9A, 9B, 9C"></textarea>
+          <p class="hint">Beberapa kelas dipisahkan dengan koma.</p>
         </div>
         <div class="field">
           <label for="guru-jumlah">Jumlah murid <span class="required">wajib</span></label>
@@ -109,15 +110,18 @@
         </div>
         <div class="field">
           <label for="guru-tanggal">Tanggal <span class="required">wajib</span></label>
-          <input id="guru-tanggal" name="tanggal" type="date" value="{{ today }}" required>
+          <input id="guru-tanggal" name="tanggal" type="date" value="{{ today }}" min="{{ today }}" data-today="{{ today }}" data-now="{{ now_time }}" required>
         </div>
         <div class="field">
           <label for="guru-mulai">Waktu mulai <span class="required">wajib</span></label>
-          <input id="guru-mulai" name="waktu_mulai" type="time" required>
+          <input id="guru-mulai" name="waktu_mulai" type="time" min="{{ now_time }}" required>
         </div>
         <div class="field">
           <label for="guru-selesai">Waktu selesai <span class="required">wajib</span></label>
-          <input id="guru-selesai" name="waktu_selesai" type="time" required>
+          <input id="guru-selesai" name="waktu_selesai" type="time" min="{{ now_time }}" required>
+        </div>
+        <div class="field full">
+          <div id="labSchedule" class="schedule-preview" hidden></div>
         </div>
         <div class="field full">
           <label for="guru-foto">Foto kondisi awal <span class="required">wajib</span></label>
@@ -210,7 +214,7 @@
             <td>
               <div class="person">
                 <span class="initials">{{ l.nama[:1]|upper }}</span>
-                <span><strong>{{ l.nama }}</strong><small>{{ l.kelas or 'Tanpa kelas' }}{% if l.nis %} NIS {{ l.nis }}{% endif %}</small></span>
+                <span class="person-text"><strong>{{ l.nama }}</strong><small>{{ l.kelas or 'Tanpa kelas' }}{% if l.nis %} NIS {{ l.nis }}{% endif %}</small></span>
               </div>
             </td>
             <td>{{ l.peminjam_type }}</td>
@@ -274,14 +278,14 @@
       </form>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Nama guru</th><th>Status</th></tr></thead>
+          <thead><tr><th>Nama guru</th><th>Aksi</th></tr></thead>
           <tbody>
             {% for t in teachers %}
             <tr>
               <td>
                 <div class="person">
                   <span class="initials">{{ t.nama[:1]|upper }}</span>
-                  <strong>{{ t.nama }}</strong>
+                  <span class="person-text"><strong>{{ t.nama }}</strong></span>
                 </div>
               </td>
               <td>
@@ -293,12 +297,43 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="2"><div class="empty">Belum ada akun guru.</div></td></tr>
+            <tr><td colspan="2"><div class="empty">Belum ada akun guru aktif.</div></td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
       <p class="hint">Masukkan nama yang sama untuk mengatur ulang password guru lama.</p>
+
+      {% if inactive_teachers %}
+      <div class="section-head" style="margin-top:20px">
+        <div><h3>Guru nonaktif</h3><p class="muted">Akun yang bisa diaktifkan kembali.</p></div>
+        <span class="tag">{{ inactive_teachers|length }} nonaktif</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Nama guru</th><th>Aksi</th></tr></thead>
+          <tbody>
+            {% for t in inactive_teachers %}
+            <tr>
+              <td>
+                <div class="person">
+                  <span class="initials">{{ t.nama[:1]|upper }}</span>
+                  <span class="person-text"><strong>{{ t.nama }}</strong></span>
+                </div>
+              </td>
+              <td>
+                <form method="post" action="{{ url_for('activate_teacher', teacher_id=t.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="section" value="admin">
+                  <button class="btn btn-secondary btn-small" type="submit">Aktifkan</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
     </section>
 
     <section class="panel">
