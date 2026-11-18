@@ -106,6 +106,9 @@ Ganti TOKEN, domain, dan SECRET sesuai environment. Setelah webhook aktif, admin
 - Pengajuan mengirim pesan dan foto dalam satu panggilan Telegram.
 - Foto penyelesaian dikirim paralel, bukan berurutan.
 - Workflow GitHub Actions memanggil `/healthz` selama jam sekolah untuk mengurangi cold start.
+- Satu koneksi database dipakai ulang selama satu request.
+- Schema version membuat migrasi dan backfill tidak dijalankan ulang setiap cold start.
+- Query dashboard, jadwal, guru, dan statistik sudah digabung dan memakai index yang sesuai.
 
 ## Test
 

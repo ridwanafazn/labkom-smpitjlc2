@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -740,6 +741,51 @@ def test_photo_documentation_page_checks_ownership(client):
 
     login(client)
     assert client.get(f"/loan/{loan_b}/photos").status_code == 200
+
+
+def test_request_reuses_one_database_connection(client, monkeypatch):
+    login(client)
+    calls = []
+    original = labkom._new_connection
+
+    def counting_connection():
+        calls.append(1)
+        return original()
+
+    monkeypatch.setattr(labkom, "_new_connection", counting_connection)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert len(calls) <= 1
+
+
+def test_schema_version_skips_full_setup_on_repeat_init(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(labkom, "_init_schema", lambda c: called.append(1))
+    labkom.init_db()
+    assert called == []
+
+
+def test_dashboard_schedule_ignores_past_dates(client):
+    insert_loan(
+        nama="Jadwal Lampau",
+        status="Disetujui",
+        tanggal="2020-01-01",
+        lab="Labkom 1",
+        created_by="Guru A",
+    )
+    insert_loan(
+        nama="Jadwal Depan",
+        status="Disetujui",
+        tanggal="2099-01-01",
+        lab="Labkom 2",
+        created_by="Guru A",
+    )
+    login(client)
+    response = client.get("/")
+    body = response.get_data(as_text=True)
+    schedule = re.search(r'<table id="scheduleTable">.*?</table>', body, re.S).group(0)
+    assert "2099-01-01" in schedule
+    assert "2020-01-01" not in schedule
 
 
 def test_pagination(client):

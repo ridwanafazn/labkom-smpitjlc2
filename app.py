@@ -26,6 +26,8 @@ from flask import (
     Response,
     abort,
     flash,
+    g,
+    has_request_context,
     jsonify,
     redirect,
     render_template,
@@ -79,6 +81,7 @@ LOGIN_WINDOW = max(60, int(os.environ.get("LOGIN_WINDOW_SECONDS", "900")))
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 WIB = timezone(timedelta(hours=7), "WIB")
 LABKOM_LOCK_ID = 728199
+SCHEMA_VERSION = "2"
 
 if USE_POSTGRES:
     import psycopg
@@ -160,40 +163,87 @@ class PgConnection:
         self._conn.close()
 
 
+def _new_connection():
+    if USE_POSTGRES:
+        return PgConnection(
+            psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=15)
+        )
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
 @contextmanager
 def db(immediate=False):
     """Buka koneksi database, commit/rollback, lalu tutup secara eksplisit.
 
+    Dalam request, satu koneksi dipakai ulang oleh semua blok db() agar halaman
+    tidak membuka koneksi Neon berkali-kali. Blok bersarang tidak commit sendiri;
+    commit dilakukan oleh blok terluar. Koneksi ditutup di teardown request.
+
     SQLite memakai BEGIN IMMEDIATE, PostgreSQL memakai advisory transaction lock
     agar cek bentrok + insert tidak disela request lain.
     """
-    if USE_POSTGRES:
-        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=15)
+    request_context = has_request_context()
+    conn = getattr(g, "db_conn", None) if request_context else None
+    depth = getattr(g, "db_depth", 0) if request_context else 0
+    outer = conn is None or depth == 0
+
+    if conn is None:
+        conn = _new_connection()
+        if request_context:
+            g.db_conn = conn
+            g.db_depth = 0
+
+    if outer:
         try:
             if immediate:
-                conn.execute("SELECT pg_advisory_xact_lock(%s)", (LABKOM_LOCK_ID,))
-            yield PgConnection(conn)
-            conn.commit()
+                if USE_POSTGRES:
+                    conn.execute(
+                        "SELECT pg_advisory_xact_lock(%s)", (LABKOM_LOCK_ID,)
+                    )
+                else:
+                    conn.execute("BEGIN IMMEDIATE")
         except Exception:
-            conn.rollback()
-            raise
-        finally:
+            if request_context:
+                g.db_conn = None
             conn.close()
-        return
+            raise
 
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")
-    if immediate:
-        conn.execute("BEGIN IMMEDIATE")
+    if request_context:
+        g.db_depth = depth + 1
     try:
         yield conn
-        conn.commit()
+        if outer:
+            conn.commit()
     except Exception:
-        conn.rollback()
+        if outer:
+            conn.rollback()
         raise
     finally:
+        if request_context:
+            g.db_depth = depth
+        if outer and not request_context:
+            conn.close()
+
+
+@app.teardown_request
+def close_request_db(exception=None):
+    if not has_request_context():
+        return
+    conn = g.pop("db_conn", None)
+    g.pop("db_depth", None)
+    if conn is None:
+        return
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+    try:
         conn.close()
+    except Exception:
+        pass
 
 
 def table_columns(c, table):
@@ -326,159 +376,210 @@ def _ensure_teachers_schema(c):
     )
 
 
+def _meta_get(c, key):
+    row = c.execute("SELECT value FROM app_meta WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else ""
+
+
+def _meta_set(c, key, value):
+    c.execute(
+        "INSERT INTO app_meta(key,value) VALUES(?,?) "
+        "ON CONFLICT (key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+
+
+def _admin_password_fingerprint(password):
+    if not password:
+        return ""
+    return hmac.new(SECRET_KEY.encode(), password.encode(), "sha256").hexdigest()
+
+
+def _init_schema(c):
+    id_column = "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    c.execute(
+        f"""CREATE TABLE IF NOT EXISTS loans (
+        id {id_column},
+        peminjam_type TEXT NOT NULL,
+        nama TEXT NOT NULL,
+        kelas TEXT DEFAULT '',
+        jumlah_murid INTEGER DEFAULT 0,
+        nis TEXT DEFAULT '',
+        lab TEXT NOT NULL,
+        tanggal TEXT NOT NULL,
+        waktu_mulai TEXT NOT NULL,
+        waktu_selesai TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Dipinjam',
+        created_at TEXT NOT NULL,
+        returned_at TEXT DEFAULT '',
+        photo_before TEXT DEFAULT '',
+        photo_after TEXT DEFAULT ''
+    )"""
+    )
+    # Migrasi aman: menambah kolom tanpa menghapus data transaksi lama.
+    cols = table_columns(c, "loans")
+    if "photo_before" not in cols:
+        c.execute("ALTER TABLE loans ADD COLUMN photo_before TEXT DEFAULT ''")
+    if "photo_after" not in cols:
+        c.execute("ALTER TABLE loans ADD COLUMN photo_after TEXT DEFAULT ''")
+    if "created_by" not in cols:
+        c.execute("ALTER TABLE loans ADD COLUMN created_by TEXT DEFAULT ''")
+    if "completed_by" not in cols:
+        c.execute("ALTER TABLE loans ADD COLUMN completed_by TEXT DEFAULT ''")
+    if "decision_by" not in cols:
+        c.execute("ALTER TABLE loans ADD COLUMN decision_by TEXT DEFAULT ''")
+    if "decision_at" not in cols:
+        c.execute("ALTER TABLE loans ADD COLUMN decision_at TEXT DEFAULT ''")
+    if "decision_note" not in cols:
+        c.execute("ALTER TABLE loans ADD COLUMN decision_note TEXT DEFAULT ''")
+    c.execute(
+        "UPDATE loans SET created_by=nama "
+        "WHERE peminjam_type='Guru' AND (created_by IS NULL OR created_by='')"
+    )
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS loan_classes (
+        loan_id INTEGER NOT NULL,
+        kelas TEXT NOT NULL,
+        PRIMARY KEY (loan_id, kelas)
+    )"""
+    )
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS idx_loan_classes_loan ON loan_classes(loan_id)"
+    )
+    for loan in c.execute("SELECT id,kelas FROM loans").fetchall():
+        for class_name in parse_classes(loan["kelas"]):
+            c.execute(
+                "INSERT INTO loan_classes(loan_id,kelas) VALUES(?,?) "
+                "ON CONFLICT (loan_id,kelas) DO NOTHING",
+                (loan["id"], class_name),
+            )
+    _ensure_teachers_schema(c)
+    c.execute(
+        """CREATE TABLE IF NOT EXISTS students (
+        nis TEXT PRIMARY KEY, nama TEXT NOT NULL, kelas TEXT NOT NULL
+    )"""
+    )
+    blob_type = "BYTEA" if USE_POSTGRES else "BLOB"
+    c.execute(
+        f"""CREATE TABLE IF NOT EXISTS photos (
+        filename TEXT PRIMARY KEY,
+        content_type TEXT NOT NULL,
+        data {blob_type} NOT NULL
+    )"""
+    )
+    # Index untuk pola query yang dipakai halaman utama dan pengecekan bentrok.
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS idx_loans_lab_tanggal_status "
+        "ON loans(lab, tanggal, status)"
+    )
+    c.execute("CREATE INDEX IF NOT EXISTS idx_loans_nis_status ON loans(nis, status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_loans_created_by ON loans(created_by)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_loans_status ON loans(status)")
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS idx_loans_status_tanggal_waktu "
+        "ON loans(status, tanggal, waktu_mulai)"
+    )
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS idx_loans_status_created "
+        "ON loans(status, created_at)"
+    )
+    try:
+        # Satu murid hanya boleh punya satu pinjaman aktif.
+        c.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_loans_one_active_student "
+            "ON loans(nis) WHERE status='Dipinjam' AND peminjam_type='Murid'"
+        )
+    except Exception:
+        app.logger.warning(
+            "Index murid aktif tidak dibuat karena masih ada data pinjaman ganda."
+        )
+
+
+def _ensure_admin(c):
+    admin_password = os.environ.get("ADMIN_PASSWORD", "").strip()
+    fingerprint = _admin_password_fingerprint(admin_password)
+    stored_fingerprint = _meta_get(c, "admin_password_fingerprint")
+    admin_row = c.execute(
+        "SELECT id,nama,password_hash FROM teachers WHERE lower(nama)=lower(?)",
+        (ADMIN_NAME,),
+    ).fetchone()
+
+    if admin_row:
+        admin_id = admin_row["id"]
+        if admin_password and (
+            not admin_row["password_hash"] or fingerprint != stored_fingerprint
+        ):
+            c.execute(
+                "UPDATE teachers SET nama=?,aktif=1,role='admin',password_hash=? WHERE id=?",
+                (ADMIN_NAME, generate_password_hash(admin_password), admin_id),
+            )
+            _meta_set(c, "admin_password_fingerprint", fingerprint)
+        else:
+            c.execute(
+                "UPDATE teachers SET nama=?,aktif=1,role='admin' WHERE id=?",
+                (ADMIN_NAME, admin_id),
+            )
+    else:
+        admin_hash = generate_password_hash(admin_password) if admin_password else ""
+        admin_id = c.execute(
+            "INSERT INTO teachers(nama,aktif,created_at,password_hash,role) "
+            "VALUES(?,1,?,?,'admin') RETURNING id",
+            (
+                ADMIN_NAME,
+                datetime.now(WIB).isoformat(timespec="seconds"),
+                admin_hash,
+            ),
+        ).fetchone()["id"]
+        if admin_password:
+            _meta_set(c, "admin_password_fingerprint", fingerprint)
+
+    # Hanya satu akun admin yang berasal dari ADMIN_NAME. Jika nama admin
+    # diganti, akun admin lama diturunkan menjadi guru agar tidak menyisakan
+    # akses admin dengan password lama.
+    c.execute(
+        "UPDATE teachers SET role='teacher' WHERE role='admin' AND id<>?",
+        (admin_id,),
+    )
+
+
+def _import_students(c):
+    count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
+    if count != 0 or not os.path.exists(STUDENTS_PATH):
+        return
+    try:
+        with open(STUDENTS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        rows = []
+        for student in data:
+            nis = str(student.get("nis", "")).strip()
+            nama = str(student.get("nama", "")).strip()
+            kelas = str(student.get("kelas", "")).strip()
+            if nis and nama and kelas:
+                rows.append((nis, nama, kelas))
+        c.executemany(
+            "INSERT INTO students(nis,nama,kelas) VALUES(?,?,?) "
+            "ON CONFLICT (nis) DO NOTHING",
+            rows,
+        )
+    except (OSError, json.JSONDecodeError, TypeError, AttributeError) as exc:
+        app.logger.warning("Gagal mengimpor students.json: %s", exc)
+
+
 def init_db():
     # Di PostgreSQL, serialisasi inisialisasi antar-instance Vercel agar
     # migrasi dan pembuatan akun admin tidak saling menabrak saat cold start.
     with db(immediate=USE_POSTGRES) as c:
         if not USE_POSTGRES:
             c.execute("PRAGMA journal_mode=WAL")
-        id_column = "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
         c.execute(
-            f"""CREATE TABLE IF NOT EXISTS loans (
-            id {id_column},
-            peminjam_type TEXT NOT NULL,
-            nama TEXT NOT NULL,
-            kelas TEXT DEFAULT '',
-            jumlah_murid INTEGER DEFAULT 0,
-            nis TEXT DEFAULT '',
-            lab TEXT NOT NULL,
-            tanggal TEXT NOT NULL,
-            waktu_mulai TEXT NOT NULL,
-            waktu_selesai TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Dipinjam',
-            created_at TEXT NOT NULL,
-            returned_at TEXT DEFAULT '',
-            photo_before TEXT DEFAULT '',
-            photo_after TEXT DEFAULT ''
-        )"""
+            "CREATE TABLE IF NOT EXISTS app_meta "
+            "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
         )
-        # Migrasi aman: menambah kolom tanpa menghapus data transaksi lama.
-        cols = table_columns(c, "loans")
-        if "photo_before" not in cols:
-            c.execute("ALTER TABLE loans ADD COLUMN photo_before TEXT DEFAULT ''")
-        if "photo_after" not in cols:
-            c.execute("ALTER TABLE loans ADD COLUMN photo_after TEXT DEFAULT ''")
-        if "created_by" not in cols:
-            c.execute("ALTER TABLE loans ADD COLUMN created_by TEXT DEFAULT ''")
-        if "completed_by" not in cols:
-            c.execute("ALTER TABLE loans ADD COLUMN completed_by TEXT DEFAULT ''")
-        if "decision_by" not in cols:
-            c.execute("ALTER TABLE loans ADD COLUMN decision_by TEXT DEFAULT ''")
-        if "decision_at" not in cols:
-            c.execute("ALTER TABLE loans ADD COLUMN decision_at TEXT DEFAULT ''")
-        if "decision_note" not in cols:
-            c.execute("ALTER TABLE loans ADD COLUMN decision_note TEXT DEFAULT ''")
-        c.execute(
-            "UPDATE loans SET created_by=nama "
-            "WHERE peminjam_type='Guru' AND (created_by IS NULL OR created_by='')"
-        )
-        c.execute(
-            """CREATE TABLE IF NOT EXISTS loan_classes (
-            loan_id INTEGER NOT NULL,
-            kelas TEXT NOT NULL,
-            PRIMARY KEY (loan_id, kelas)
-        )"""
-        )
-        c.execute(
-            "CREATE INDEX IF NOT EXISTS idx_loan_classes_loan ON loan_classes(loan_id)"
-        )
-        for loan in c.execute("SELECT id,kelas FROM loans").fetchall():
-            for class_name in parse_classes(loan["kelas"]):
-                c.execute(
-                    "INSERT INTO loan_classes(loan_id,kelas) VALUES(?,?) "
-                    "ON CONFLICT (loan_id,kelas) DO NOTHING",
-                    (loan["id"], class_name),
-                )
-        _ensure_teachers_schema(c)
-        c.execute(
-            """CREATE TABLE IF NOT EXISTS students (
-            nis TEXT PRIMARY KEY, nama TEXT NOT NULL, kelas TEXT NOT NULL
-        )"""
-        )
-        blob_type = "BYTEA" if USE_POSTGRES else "BLOB"
-        c.execute(
-            f"""CREATE TABLE IF NOT EXISTS photos (
-            filename TEXT PRIMARY KEY,
-            content_type TEXT NOT NULL,
-            data {blob_type} NOT NULL
-        )"""
-        )
-        # Index untuk pola query yang dipakai halaman utama dan pengecekan bentrok.
-        c.execute(
-            "CREATE INDEX IF NOT EXISTS idx_loans_lab_tanggal_status "
-            "ON loans(lab, tanggal, status)"
-        )
-        c.execute("CREATE INDEX IF NOT EXISTS idx_loans_nis_status ON loans(nis, status)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_loans_created_by ON loans(created_by)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_loans_status ON loans(status)")
-        try:
-            # Satu murid hanya boleh punya satu pinjaman aktif.
-            c.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_loans_one_active_student "
-                "ON loans(nis) WHERE status='Dipinjam' AND peminjam_type='Murid'"
-            )
-        except Exception:
-            app.logger.warning(
-                "Index murid aktif tidak dibuat karena masih ada data pinjaman ganda."
-            )
-
-        # Akun admin dibuat/diperbarui dari environment. Password disimpan sebagai hash.
-        admin_password = os.environ.get("ADMIN_PASSWORD", "").strip()
-        admin_hash = generate_password_hash(admin_password) if admin_password else ""
-        admin_row = None
-        for row in c.execute("SELECT id,nama FROM teachers").fetchall():
-            if str(row["nama"]).casefold() == ADMIN_NAME.casefold():
-                admin_row = row
-                break
-        if admin_row:
-            admin_id = admin_row["id"]
-            if admin_hash:
-                c.execute(
-                    "UPDATE teachers SET nama=?,aktif=1,role='admin',password_hash=? WHERE id=?",
-                    (ADMIN_NAME, admin_hash, admin_id),
-                )
-            else:
-                c.execute(
-                    "UPDATE teachers SET nama=?,aktif=1,role='admin' WHERE id=?",
-                    (ADMIN_NAME, admin_id),
-                )
-        else:
-            admin_id = c.execute(
-                "INSERT INTO teachers(nama,aktif,created_at,password_hash,role) "
-                "VALUES(?,1,?,?,'admin') RETURNING id",
-                (
-                    ADMIN_NAME,
-                    datetime.now(WIB).isoformat(timespec="seconds"),
-                    admin_hash,
-                ),
-            ).fetchone()["id"]
-        # Hanya satu akun admin yang berasal dari ADMIN_NAME. Jika nama admin
-        # diganti, akun admin lama diturunkan menjadi guru agar tidak menyisakan
-        # akses admin dengan password lama.
-        c.execute(
-            "UPDATE teachers SET role='teacher' WHERE role='admin' AND id<>?",
-            (admin_id,),
-        )
-
-        count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
-        if count == 0 and os.path.exists(STUDENTS_PATH):
-            try:
-                with open(STUDENTS_PATH, encoding="utf-8") as f:
-                    data = json.load(f)
-                rows = []
-                for student in data:
-                    nis = str(student.get("nis", "")).strip()
-                    nama = str(student.get("nama", "")).strip()
-                    kelas = str(student.get("kelas", "")).strip()
-                    if nis and nama and kelas:
-                        rows.append((nis, nama, kelas))
-                c.executemany(
-                    "INSERT INTO students(nis,nama,kelas) VALUES(?,?,?) "
-                    "ON CONFLICT (nis) DO NOTHING",
-                    rows,
-                )
-            except (OSError, json.JSONDecodeError, TypeError, AttributeError) as exc:
-                app.logger.warning("Gagal mengimpor students.json: %s", exc)
+        if _meta_get(c, "schema_version") != SCHEMA_VERSION:
+            _init_schema(c)
+            _meta_set(c, "schema_version", SCHEMA_VERSION)
+        _ensure_admin(c)
+        _import_students(c)
 
 
 def photo_content_type(filename):
@@ -998,7 +1099,7 @@ def require_login():
         return redirect(url_for("login"))
     with db() as c:
         account = c.execute(
-            "SELECT role FROM teachers WHERE nama=? AND aktif=1",
+            "SELECT role FROM teachers WHERE lower(nama)=lower(?) AND aktif=1",
             (session["user_name"],),
         ).fetchone()
     if not account:
@@ -1081,7 +1182,7 @@ def login():
             return redirect(url_for("login"))
         with db() as c:
             account = c.execute(
-                "SELECT nama,password_hash,role FROM teachers WHERE nama=? AND aktif=1",
+                "SELECT nama,password_hash,role FROM teachers WHERE lower(nama)=lower(?) AND aktif=1",
                 (name,),
             ).fetchone()
         if (
@@ -1134,11 +1235,9 @@ def manage_teachers():
         flash("Password guru minimal 8 karakter.", "error")
     else:
         with db() as c:
-            existing = None
-            for row in c.execute("SELECT id,nama FROM teachers").fetchall():
-                if str(row["nama"]).casefold() == name.casefold():
-                    existing = row
-                    break
+            existing = c.execute(
+                "SELECT id,nama FROM teachers WHERE lower(nama)=lower(?)", (name,)
+            ).fetchone()
             password_hash = generate_password_hash(password)
             if existing:
                 # Nama lama dipertahankan agar riwayat tetap terhubung.
@@ -1326,13 +1425,31 @@ def index():
     except ValueError:
         page = 1
 
+    now = datetime.now(WIB)
+    today = now.strftime("%Y-%m-%d")
+    now_time = now.strftime("%H:%M")
+
     with db() as c:
         if session.get("role") == "admin":
-            total_loans = c.execute("SELECT COUNT(*) n FROM loans").fetchone()["n"]
+            stats = c.execute(
+                """SELECT
+                   (SELECT COUNT(*) FROM loans) AS total_loans,
+                   (SELECT COUNT(*) FROM students) AS students_count,
+                   (SELECT COUNT(*) FROM loans
+                    WHERE status IN ('Disetujui','Dipinjam')) AS active"""
+            ).fetchone()
         else:
-            total_loans = c.execute(
-                "SELECT COUNT(*) n FROM loans WHERE created_by=?", (session["user_name"],)
-            ).fetchone()["n"]
+            stats = c.execute(
+                """SELECT
+                   (SELECT COUNT(*) FROM loans WHERE created_by=?) AS total_loans,
+                   (SELECT COUNT(*) FROM students) AS students_count,
+                   (SELECT COUNT(*) FROM loans
+                    WHERE status IN ('Disetujui','Dipinjam')) AS active""",
+                (session["user_name"],),
+            ).fetchone()
+        total_loans = stats["total_loans"]
+        students_count = stats["students_count"]
+        active = stats["active"]
         pages = max(1, (total_loans + PAGE_SIZE - 1) // PAGE_SIZE)
         page = min(page, pages)
         offset = (page - 1) * PAGE_SIZE
@@ -1351,17 +1468,16 @@ def index():
             ).fetchall()
             schedule = c.execute(
                 "SELECT lab,tanggal,waktu_mulai,waktu_selesai FROM loans "
-                "WHERE status IN ('Disetujui','Dipinjam') "
-                "ORDER BY tanggal,waktu_mulai LIMIT 100"
+                "WHERE status IN ('Disetujui','Dipinjam') AND tanggal>=? "
+                "ORDER BY tanggal,waktu_mulai LIMIT 100",
+                (today,),
             ).fetchall()
-            teachers = c.execute(
-                "SELECT id,nama FROM teachers "
-                "WHERE aktif=1 AND role='teacher' ORDER BY nama"
+            teacher_rows = c.execute(
+                "SELECT id,nama,aktif FROM teachers "
+                "WHERE role='teacher' ORDER BY nama"
             ).fetchall()
-            inactive_teachers = c.execute(
-                "SELECT id,nama FROM teachers "
-                "WHERE aktif=0 AND role='teacher' ORDER BY nama"
-            ).fetchall()
+            teachers = [row for row in teacher_rows if row["aktif"]]
+            inactive_teachers = [row for row in teacher_rows if not row["aktif"]]
             students = c.execute(
                 "SELECT nis,nama,kelas FROM students ORDER BY kelas, nama"
             ).fetchall()
@@ -1382,16 +1498,13 @@ def index():
             ).fetchall()
             schedule = c.execute(
                 "SELECT lab,tanggal,waktu_mulai,waktu_selesai FROM loans "
-                "WHERE status IN ('Disetujui','Dipinjam') "
-                "ORDER BY tanggal,waktu_mulai LIMIT 100"
+                "WHERE status IN ('Disetujui','Dipinjam') AND tanggal>=? "
+                "ORDER BY tanggal,waktu_mulai LIMIT 100",
+                (today,),
             ).fetchall()
             teachers = []
             inactive_teachers = []
             students = []
-        students_count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
-        active = c.execute(
-            "SELECT COUNT(*) n FROM loans WHERE status IN ('Disetujui','Dipinjam')"
-        ).fetchone()["n"]
 
     return render_template(
         "index.html",
@@ -1404,8 +1517,8 @@ def index():
         teachers=teachers,
         inactive_teachers=inactive_teachers,
         students=students,
-        today=datetime.now(WIB).strftime("%Y-%m-%d"),
-        now_time=datetime.now(WIB).strftime("%H:%M"),
+        today=today,
+        now_time=now_time,
         page=page,
         pages=pages,
         page_size=PAGE_SIZE,
