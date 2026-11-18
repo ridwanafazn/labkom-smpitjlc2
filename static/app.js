@@ -21,6 +21,14 @@ function goView(id) {
   showView(id, button);
 }
 
+function updateMenuButton(open) {
+  const button = document.getElementById("menuButton");
+  if (!button) return;
+  button.classList.toggle("is-open", open);
+  button.setAttribute("aria-expanded", open ? "true" : "false");
+  button.setAttribute("aria-label", open ? "Tutup menu" : "Buka menu");
+}
+
 function toggleSidebar(force) {
   const app = document.querySelector(".app");
   const sidebar = document.getElementById("sidebar");
@@ -31,11 +39,13 @@ function toggleSidebar(force) {
     const open = typeof force === "boolean" ? force : !sidebar.classList.contains("open");
     sidebar.classList.toggle("open", open);
     backdrop?.classList.toggle("show", open);
+    updateMenuButton(open);
   } else {
     sidebar.classList.remove("open");
     backdrop?.classList.remove("show");
     if (typeof force === "boolean") app.classList.toggle("sidebar-collapsed", !force);
     else app.classList.toggle("sidebar-collapsed");
+    updateMenuButton(!app.classList.contains("sidebar-collapsed"));
   }
 }
 
@@ -46,9 +56,11 @@ window.addEventListener("resize", () => {
   if (!app || !sidebar) return;
   if (window.matchMedia("(max-width: 760px)").matches) {
     app.classList.remove("sidebar-collapsed");
+    updateMenuButton(sidebar.classList.contains("open"));
   } else {
     sidebar.classList.remove("open");
     backdrop?.classList.remove("show");
+    updateMenuButton(!app.classList.contains("sidebar-collapsed"));
   }
 });
 
@@ -176,6 +188,14 @@ document.addEventListener("DOMContentLoaded", () => {
       }, 0);
     });
   });
+
+  const app = document.querySelector(".app");
+  const sidebar = document.getElementById("sidebar");
+  if (window.matchMedia("(max-width: 760px)").matches) {
+    updateMenuButton(sidebar?.classList.contains("open") || false);
+  } else {
+    updateMenuButton(!app?.classList.contains("sidebar-collapsed"));
+  }
 
   const view = window.location.hash.replace("#", "");
   if (view && document.getElementById("view-" + view)) {

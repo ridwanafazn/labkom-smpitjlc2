@@ -85,6 +85,7 @@ app.config.update(
     ) == "1",
     MAX_CONTENT_LENGTH=MAX_UPLOAD_MB * 1024 * 1024,
     MAX_FORM_MEMORY_SIZE=2 * 1024 * 1024,
+    WTF_CSRF_TIME_LIMIT=8 * 60 * 60,
 )
 csrf = CSRFProtect(app)
 
@@ -183,6 +184,110 @@ def table_columns(c, table):
     return {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def _loan_ref_count(c, name):
+    row = c.execute(
+        "SELECT COUNT(*) n FROM loans WHERE created_by=? OR completed_by=?",
+        (name, name),
+    ).fetchone()
+    return row["n"] if row else 0
+
+
+def _ensure_teachers_schema(c):
+    """Pastikan tabel guru memakai ID permanen dan nama unik tanpa beda huruf."""
+    id_type = "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    c.execute(
+        f"""CREATE TABLE IF NOT EXISTS teachers (
+        id {id_type},
+        nama TEXT NOT NULL,
+        aktif INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        password_hash TEXT DEFAULT '',
+        role TEXT NOT NULL DEFAULT 'teacher'
+    )"""
+    )
+    cols = table_columns(c, "teachers")
+    if "password_hash" not in cols:
+        c.execute("ALTER TABLE teachers ADD COLUMN password_hash TEXT DEFAULT ''")
+    if "role" not in cols:
+        c.execute("ALTER TABLE teachers ADD COLUMN role TEXT NOT NULL DEFAULT 'teacher'")
+    if "id" in cols:
+        c.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_name_lower "
+            "ON teachers (lower(nama))"
+        )
+        return
+
+    rows = [
+        dict(row)
+        for row in c.execute(
+            "SELECT nama,aktif,created_at,password_hash,role FROM teachers"
+        ).fetchall()
+    ]
+    groups = {}
+    for row in rows:
+        key = str(row["nama"]).strip().casefold()
+        groups.setdefault(key, []).append(row)
+
+    canonical_rows = []
+    for group in groups.values():
+        scored = [
+            (
+                _loan_ref_count(c, row["nama"]),
+                int(row["aktif"] or 0),
+                str(row["created_at"] or ""),
+                row,
+            )
+            for row in group
+        ]
+        canonical = max(scored, key=lambda item: (item[0], item[1], item[2]))[3]
+        for row in group:
+            if row["nama"] != canonical["nama"]:
+                c.execute(
+                    "UPDATE loans SET created_by=? WHERE created_by=?",
+                    (canonical["nama"], row["nama"]),
+                )
+                c.execute(
+                    "UPDATE loans SET completed_by=? WHERE completed_by=?",
+                    (canonical["nama"], row["nama"]),
+                )
+        canonical_rows.append(canonical)
+
+    c.execute("DROP TABLE IF EXISTS teachers_new")
+    c.execute(
+        f"""CREATE TABLE teachers_new (
+        id {id_type},
+        nama TEXT NOT NULL,
+        aktif INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        password_hash TEXT DEFAULT '',
+        role TEXT NOT NULL DEFAULT 'teacher'
+    )"""
+    )
+    for row in canonical_rows:
+        c.execute(
+            "INSERT INTO teachers_new(nama,aktif,created_at,password_hash,role) "
+            "VALUES(?,?,?,?,?)",
+            (
+                row["nama"],
+                row["aktif"],
+                row["created_at"],
+                row["password_hash"] or "",
+                row["role"] or "teacher",
+            ),
+        )
+    c.execute("DROP TABLE teachers")
+    c.execute("ALTER TABLE teachers_new RENAME TO teachers")
+    c.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_name_lower "
+        "ON teachers (lower(nama))"
+    )
+    app.logger.info(
+        "Migrasi tabel guru selesai. %s akun diproses, %s akun disimpan.",
+        len(rows),
+        len(canonical_rows),
+    )
+
+
 def init_db():
     with db() as c:
         if not USE_POSTGRES:
@@ -221,16 +326,7 @@ def init_db():
             "UPDATE loans SET created_by=nama "
             "WHERE peminjam_type='Guru' AND (created_by IS NULL OR created_by='')"
         )
-        c.execute(
-            """CREATE TABLE IF NOT EXISTS teachers (
-            nama TEXT PRIMARY KEY, aktif INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
-        )"""
-        )
-        teacher_cols = table_columns(c, "teachers")
-        if "password_hash" not in teacher_cols:
-            c.execute("ALTER TABLE teachers ADD COLUMN password_hash TEXT DEFAULT ''")
-        if "role" not in teacher_cols:
-            c.execute("ALTER TABLE teachers ADD COLUMN role TEXT NOT NULL DEFAULT 'teacher'")
+        _ensure_teachers_schema(c)
         c.execute(
             """CREATE TABLE IF NOT EXISTS students (
             nis TEXT PRIMARY KEY, nama TEXT NOT NULL, kelas TEXT NOT NULL
@@ -266,15 +362,32 @@ def init_db():
         # Akun admin dibuat/diperbarui dari environment. Password disimpan sebagai hash.
         admin_password = os.environ.get("ADMIN_PASSWORD", "").strip()
         admin_hash = generate_password_hash(admin_password) if admin_password else ""
-        c.execute(
-            """INSERT INTO teachers(nama,aktif,created_at,password_hash,role)
-               VALUES(?,1,?,?,'admin')
-               ON CONFLICT(nama) DO UPDATE SET aktif=1, role='admin',
-               password_hash=CASE WHEN excluded.password_hash<>''
-                                  THEN excluded.password_hash
-                                  ELSE teachers.password_hash END""",
-            (ADMIN_NAME, datetime.now(WIB).isoformat(timespec="seconds"), admin_hash),
-        )
+        admin_row = None
+        for row in c.execute("SELECT id,nama FROM teachers").fetchall():
+            if str(row["nama"]).casefold() == ADMIN_NAME.casefold():
+                admin_row = row
+                break
+        if admin_row:
+            if admin_hash:
+                c.execute(
+                    "UPDATE teachers SET nama=?,aktif=1,role='admin',password_hash=? WHERE id=?",
+                    (ADMIN_NAME, admin_hash, admin_row["id"]),
+                )
+            else:
+                c.execute(
+                    "UPDATE teachers SET nama=?,aktif=1,role='admin' WHERE id=?",
+                    (ADMIN_NAME, admin_row["id"]),
+                )
+        else:
+            c.execute(
+                "INSERT INTO teachers(nama,aktif,created_at,password_hash,role) "
+                "VALUES(?,1,?,?,'admin')",
+                (
+                    ADMIN_NAME,
+                    datetime.now(WIB).isoformat(timespec="seconds"),
+                    admin_hash,
+                ),
+            )
 
         count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
         if count == 0 and os.path.exists(STUDENTS_PATH):
@@ -507,6 +620,15 @@ def csv_safe(value):
     return text
 
 
+VALID_SECTIONS = {"dashboard", "guru", "murid", "riwayat", "admin"}
+
+
+def redirect_section(section):
+    if section not in VALID_SECTIONS:
+        section = "dashboard"
+    return redirect(url_for("index", _anchor=section))
+
+
 def _login_key(name):
     return f"{request.remote_addr or '-'}:{name.casefold()}"
 
@@ -535,13 +657,17 @@ def handle_csrf_error(error):
         "AUDIT CSRF ditolak ip=%s path=%s", request.remote_addr or "-", request.path
     )
     flash("Sesi formulir kedaluwarsa. Silakan coba lagi.", "error")
-    return redirect(url_for("index") if "user_name" in session else url_for("login"))
+    if "user_name" in session:
+        return redirect_section(request.form.get("section", "dashboard"))
+    return redirect(url_for("login"))
 
 
 @app.errorhandler(413)
 def handle_too_large(error):
     flash(f"Ukuran unggahan terlalu besar. Maksimal {MAX_UPLOAD_MB} MB.", "error")
-    return redirect(url_for("index") if "user_name" in session else url_for("login"))
+    if "user_name" in session:
+        return redirect_section("dashboard")
+    return redirect(url_for("login"))
 
 
 @app.before_request
@@ -682,49 +808,56 @@ def manage_teachers():
         flash("Password guru minimal 8 karakter.", "error")
     else:
         with db() as c:
-            # Upsert: nama yang pernah dinonaktifkan bisa diaktifkan kembali,
-            # dan password dapat diatur ulang dengan memasukkan nama yang sama.
-            c.execute(
-                """INSERT INTO teachers(nama,aktif,created_at,password_hash,role)
-                   VALUES(?,1,?,?,'teacher')
-                   ON CONFLICT(nama) DO UPDATE SET
-                   aktif=1, password_hash=excluded.password_hash""",
-                (
-                    name,
-                    datetime.now(WIB).isoformat(timespec="seconds"),
-                    generate_password_hash(password),
-                ),
-            )
+            existing = None
+            for row in c.execute("SELECT id,nama FROM teachers").fetchall():
+                if str(row["nama"]).casefold() == name.casefold():
+                    existing = row
+                    break
+            password_hash = generate_password_hash(password)
+            if existing:
+                # Nama lama dipertahankan agar riwayat tetap terhubung.
+                c.execute(
+                    "UPDATE teachers SET aktif=1, role='teacher', password_hash=? WHERE id=?",
+                    (password_hash, existing["id"]),
+                )
+            else:
+                c.execute(
+                    "INSERT INTO teachers(nama,aktif,created_at,password_hash,role) "
+                    "VALUES(?,1,?,?,'teacher')",
+                    (
+                        name,
+                        datetime.now(WIB).isoformat(timespec="seconds"),
+                        password_hash,
+                    ),
+                )
         app.logger.info(
             "AUDIT simpan guru=%s oleh=%s", name, session.get("user_name")
         )
         flash(f"Akun guru {name} disimpan dan password telah diatur.", "success")
-    return redirect(url_for("index"))
+    return redirect_section("admin")
 
 
-@app.route("/admin/teachers/<path:name>/delete", methods=["POST"])
-def delete_teacher(name):
+@app.route("/admin/teachers/<int:teacher_id>/delete", methods=["POST"])
+def delete_teacher(teacher_id):
     if session.get("role") != "admin":
         abort(403)
-    if name.casefold() == ADMIN_NAME.casefold():
-        flash("Akun admin tidak bisa dinonaktifkan.", "error")
-        return redirect(url_for("index"))
     with db() as c:
-        c.execute("UPDATE teachers SET aktif=0 WHERE nama=? AND role='teacher'", (name,))
-    app.logger.info("AUDIT nonaktifkan guru=%s oleh=%s", name, session.get("user_name"))
+        teacher = c.execute(
+            "SELECT nama,role FROM teachers WHERE id=?", (teacher_id,)
+        ).fetchone()
+        if not teacher:
+            flash("Akun guru tidak ditemukan.", "error")
+            return redirect_section("admin")
+        if teacher["role"] == "admin":
+            flash("Akun admin tidak bisa dinonaktifkan.", "error")
+            return redirect_section("admin")
+        c.execute("UPDATE teachers SET aktif=0 WHERE id=?", (teacher_id,))
+        teacher_name = teacher["nama"]
+    app.logger.info(
+        "AUDIT nonaktifkan guru=%s oleh=%s", teacher_name, session.get("user_name")
+    )
     flash("Akun guru dinonaktifkan. Riwayat peminjaman tidak dihapus.", "success")
-    return redirect(url_for("index"))
-
-
-@app.route("/admin/teachers/<path:name>/activate", methods=["POST"])
-def activate_teacher(name):
-    if session.get("role") != "admin":
-        abort(403)
-    with db() as c:
-        c.execute("UPDATE teachers SET aktif=1 WHERE nama=? AND role='teacher'", (name,))
-    app.logger.info("AUDIT aktifkan guru=%s oleh=%s", name, session.get("user_name"))
-    flash("Akun guru diaktifkan kembali.", "success")
-    return redirect(url_for("index"))
+    return redirect_section("admin")
 
 
 @app.route("/admin/students", methods=["POST"])
@@ -746,7 +879,7 @@ def manage_students():
             )
         app.logger.info("AUDIT simpan murid=%s oleh=%s", nis, session.get("user_name"))
         flash(f"Data murid {nama} disimpan.", "success")
-    return redirect(url_for("index"))
+    return redirect_section("admin")
 
 
 @app.route("/admin/students/<nis>/delete", methods=["POST"])
@@ -762,11 +895,11 @@ def delete_student(nis):
                 "Data murid tidak dihapus karena masih memiliki peminjaman aktif.",
                 "error",
             )
-            return redirect(url_for("index"))
+            return redirect_section("admin")
         c.execute("DELETE FROM students WHERE nis=?", (nis,))
     app.logger.info("AUDIT hapus murid=%s oleh=%s", nis, session.get("user_name"))
     flash("Data murid dihapus.", "success")
-    return redirect(url_for("index"))
+    return redirect_section("admin")
 
 
 @app.route("/")
@@ -800,8 +933,8 @@ def index():
                 "WHERE status='Dipinjam' ORDER BY tanggal,waktu_mulai LIMIT 100"
             ).fetchall()
             teachers = c.execute(
-                "SELECT nama,aktif FROM teachers WHERE role='teacher' "
-                "ORDER BY aktif DESC, nama"
+                "SELECT id,nama FROM teachers "
+                "WHERE aktif=1 AND role='teacher' ORDER BY nama"
             ).fetchall()
             students = c.execute(
                 "SELECT nis,nama,kelas FROM students ORDER BY kelas, nama"
@@ -822,7 +955,6 @@ def index():
             ).fetchall()
             teachers = []
             students = []
-        teachers_active = sum(1 for teacher in teachers if teacher["aktif"] == 1)
         students_count = c.execute("SELECT COUNT(*) n FROM students").fetchone()["n"]
         active = c.execute("SELECT COUNT(*) n FROM loans WHERE status='Dipinjam'").fetchone()["n"]
 
@@ -834,7 +966,6 @@ def index():
         schedule=schedule,
         active_loans=active_loans,
         teachers=teachers,
-        teachers_active=teachers_active,
         students=students,
         today=datetime.now(WIB).strftime("%Y-%m-%d"),
         page=page,
@@ -862,10 +993,10 @@ def borrow_student():
         s = c.execute("SELECT * FROM students WHERE nis=?", (nis,)).fetchone()
         if not s:
             flash("NIS tidak ditemukan dalam data murid.", "error")
-            return redirect(url_for("index"))
+            return redirect_section("murid")
         if lab not in ["Labkom 1", "Labkom 2"]:
             flash("Pilih Labkom 1 atau Labkom 2.", "error")
-            return redirect(url_for("index"))
+            return redirect_section("murid")
         try:
             duration = int(duration_raw)
         except ValueError:
@@ -889,7 +1020,7 @@ def borrow_student():
                 "Selesaikan transaksi tersebut terlebih dahulu.",
                 "error",
             )
-            return redirect(url_for("index"))
+            return redirect_section("murid")
         conflict = find_schedule_conflict(c, lab, tanggal, mulai, selesai)
         if conflict:
             flash(
@@ -898,7 +1029,7 @@ def borrow_student():
                 "Pilih lab atau waktu lain.",
                 "error",
             )
-            return redirect(url_for("index"))
+            return redirect_section("murid")
         try:
             c.execute(
                 """INSERT INTO loans(peminjam_type,nama,kelas,nis,lab,tanggal,waktu_mulai,waktu_selesai,status,created_at,created_by)
@@ -921,12 +1052,12 @@ def borrow_student():
                 "Selesaikan transaksi tersebut terlebih dahulu.",
                 "error",
             )
-            return redirect(url_for("index"))
+            return redirect_section("murid")
     flash(
         f"Peminjaman murid {s['nama']} tercatat. Mulai {mulai}, estimasi selesai {selesai}.",
         "success",
     )
-    return redirect(url_for("index"))
+    return redirect_section("murid")
 
 
 @app.route("/borrow/teacher", methods=["POST"])
@@ -945,13 +1076,13 @@ def borrow_teacher():
         or selesai <= mulai
     ):
         flash("Periksa kembali seluruh isian guru dan rentang waktunya.", "error")
-        return redirect(url_for("index"))
+        return redirect_section("guru")
     if not photo_before_file or not photo_before_file.filename:
         flash(
             "Guru wajib mengunggah foto kondisi awal Labkom dari HP sebelum menyimpan peminjaman.",
             "error",
         )
-        return redirect(url_for("index"))
+        return redirect_section("guru")
     try:
         jumlah = int(jumlah)
     except (TypeError, ValueError):
@@ -966,12 +1097,12 @@ def borrow_teacher():
                 "Pilih waktu lain atau periksa lab lainnya.",
                 "error",
             )
-            return redirect(url_for("index"))
+            return redirect_section("guru")
         try:
             photo_before = save_uploaded_photo(photo_before_file, "awal_guru")
         except ValueError as e:
             flash(str(e), "error")
-            return redirect(url_for("index"))
+            return redirect_section("guru")
         try:
             c.execute(
                 """INSERT INTO loans(peminjam_type,nama,kelas,jumlah_murid,lab,tanggal,waktu_mulai,waktu_selesai,status,created_at,photo_before,created_by)
@@ -997,7 +1128,7 @@ def borrow_teacher():
         "AUDIT peminjaman guru=%s lab=%s tanggal=%s %s-%s", nama, lab, tanggal, mulai, selesai
     )
     flash(f"Peminjaman oleh {nama} tercatat.", "success")
-    return redirect(url_for("index"))
+    return redirect_section("guru")
 
 
 @app.route("/return/<int:loan_id>", methods=["GET", "POST"])
@@ -1006,13 +1137,13 @@ def return_loan(loan_id):
         row = c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone()
     if not row:
         flash("Data peminjaman tidak ditemukan.", "error")
-        return redirect(url_for("index"))
+        return redirect_section("riwayat")
     loan = dict(row)
     if session.get("role") != "admin" and loan.get("created_by") != session.get("user_name"):
         abort(403)
     if loan["status"] == "Selesai":
         flash("Peminjaman ini sudah ditandai selesai.", "error")
-        return redirect(url_for("index"))
+        return redirect_section("riwayat")
     if request.method == "GET":
         return render_template("return.html", loan=loan)
     try:
@@ -1066,7 +1197,7 @@ def return_loan(loan_id):
             "Peminjaman ditandai selesai. Telegram belum dikonfigurasi; notifikasi tidak dikirim.",
             "warning",
         )
-    return redirect(url_for("index"))
+    return redirect_section("riwayat")
 
 
 def _backup_files():
@@ -1150,7 +1281,7 @@ def clear_all_loans():
         abort(403)
     if request.form.get("confirmation", "").strip() != "BERSIHKAN":
         flash("Penghapusan dibatalkan. Konfirmasi tidak sesuai.", "error")
-        return redirect(url_for("index"))
+        return redirect_section("admin")
 
     # Buat cadangan database dan seluruh foto sebelum menghapus apa pun.
     os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -1176,7 +1307,7 @@ def clear_all_loans():
                 pass
         app.logger.exception("Pencadangan gagal; data tidak dihapus")
         flash("Data tidak dihapus. Pencadangan gagal.", "error")
-        return redirect(url_for("index"))
+        return redirect_section("admin")
     finally:
         if temp_db and os.path.exists(temp_db):
             try:
@@ -1201,7 +1332,7 @@ def clear_all_loans():
             "Cadangan dibuat, tetapi pembersihan data gagal. Periksa log server.",
             "warning",
         )
-        return redirect(url_for("index"))
+        return redirect_section("admin")
 
     app.logger.info(
         "AUDIT bersihkan semua pinjaman oleh=%s backup=%s",
@@ -1214,7 +1345,7 @@ def clear_all_loans():
         f"Cadangan lama tersedia di backup_labkom/{os.path.basename(backup_path)}.",
         "success",
     )
-    return redirect(url_for("index"))
+    return redirect_section("admin")
 
 
 @app.route("/uploads_labkom/<path:filename>")

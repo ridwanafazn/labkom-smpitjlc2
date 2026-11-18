@@ -115,8 +115,11 @@ code { background: var(--surface-muted); border: 1px solid var(--line); border-r
 }
 .topbar-title { font-size: 13px; font-weight: 600; }
 .topbar-user { margin-left: auto; color: var(--muted); font-size: 11px; }
-.menu-button { border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 600; }
+.menu-button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 34px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 0; }
 .menu-button:hover { background: #f1f1ee; }
+.menu-button .menu-icon-close { display: none; }
+.menu-button.is-open .menu-icon-open { display: none; }
+.menu-button.is-open .menu-icon-close { display: block; }
 .backdrop { display: none; }
 
 /* Page */
@@ -144,7 +147,7 @@ code { background: var(--surface-muted); border: 1px solid var(--line); border-r
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .panel-head p { margin-bottom: 0; font-size: 12px; }
 .two-col { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; }
-.admin-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.admin-col { display: grid; grid-template-columns: 1fr; gap: 16px; }
 
 /* Tables */
 .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 12px; }

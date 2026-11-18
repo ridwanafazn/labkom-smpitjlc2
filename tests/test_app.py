@@ -160,6 +160,17 @@ def jpeg_bytes(color="red"):
     return buffer.getvalue()
 
 
+def test_csrf_error_returns_to_active_section(client):
+    login(client)
+    labkom.app.config["WTF_CSRF_ENABLED"] = True
+    try:
+        response = client.post("/admin/students", data={"section": "admin"})
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("#admin")
+    finally:
+        labkom.app.config["WTF_CSRF_ENABLED"] = False
+
+
 def test_conflict_detection(client):
     insert_loan(tanggal="2026-11-06", waktu_mulai="10:00", waktu_selesai="11:00")
     with labkom.db() as c:
@@ -331,24 +342,31 @@ def test_readd_teacher_reactivates_and_hashes_password(client):
     assert "password-baru" not in row["password_hash"]
 
 
-def test_deactivated_teacher_gets_activate_button(client):
+def test_deactivated_teacher_is_hidden_and_can_be_readded(client):
     add_teacher("Guru Cuti")
     login(client)
+    with labkom.db() as c:
+        teacher = c.execute(
+            "SELECT id FROM teachers WHERE nama='Guru Cuti'"
+        ).fetchone()
     response = client.post(
-        "/admin/teachers/Guru%20Cuti/delete",
+        f"/admin/teachers/{teacher['id']}/delete",
         data={},
         follow_redirects=True,
     )
     assert response.status_code == 200
-    assert b"Guru Cuti" in response.data
-    assert b"Aktifkan" in response.data
+    assert b"Guru Cuti" not in response.data
     with labkom.db() as c:
         row = c.execute(
             "SELECT aktif FROM teachers WHERE nama='Guru Cuti'"
         ).fetchone()
     assert row["aktif"] == 0
 
-    client.post("/admin/teachers/Guru%20Cuti/activate", follow_redirects=True)
+    client.post(
+        "/admin/teachers",
+        data={"nama": "Guru Cuti", "password": "password-baru"},
+        follow_redirects=True,
+    )
     with labkom.db() as c:
         row = c.execute(
             "SELECT aktif FROM teachers WHERE nama='Guru Cuti'"
@@ -408,6 +426,16 @@ def test_admin_manages_students(client):
     client.post("/admin/students/777/delete", follow_redirects=True)
     with labkom.db() as c:
         assert c.execute("SELECT COUNT(*) n FROM students WHERE nis='777'").fetchone()["n"] == 0
+
+
+def test_admin_save_redirects_back_to_admin_section(client):
+    login(client)
+    response = client.post(
+        "/admin/students",
+        data={"nis": "779", "nama": "Murid E", "kelas": "7D"},
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("#admin")
 
 
 def test_teacher_cannot_manage_students(client):
