@@ -460,6 +460,74 @@ def test_teacher_booking_starts_pending(client):
     assert loan["status"] == "Menunggu"
 
 
+def test_telegram_webhook_approves_and_rejects(client, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
+    pending = insert_loan(status="Menunggu", tanggal="2099-05-01")
+    payload = {
+        "callback_query": {
+            "id": "callback-approve",
+            "data": f"approve:{pending}",
+            "from": {"id": 123, "first_name": "Admin"},
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123},
+                "text": "Pengajuan\nStatus: Menunggu",
+            },
+        }
+    }
+    response = client.post(
+        "/telegram/webhook",
+        json=payload,
+        headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+    )
+    assert response.status_code == 200
+    with labkom.db() as c:
+        assert c.execute("SELECT status FROM loans WHERE id=?", (pending,)).fetchone()["status"] == "Disetujui"
+
+    rejected = insert_loan(status="Menunggu", tanggal="2099-05-02")
+    payload["callback_query"]["id"] = "callback-reject"
+    payload["callback_query"]["data"] = f"reject:{rejected}"
+    response = client.post(
+        "/telegram/webhook",
+        json=payload,
+        headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+    )
+    assert response.status_code == 200
+    with labkom.db() as c:
+        assert c.execute("SELECT status FROM loans WHERE id=?", (rejected,)).fetchone()["status"] == "Ditolak"
+
+
+def test_telegram_webhook_rejects_wrong_chat(client, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
+    pending = insert_loan(status="Menunggu", tanggal="2099-05-03")
+    payload = {
+        "callback_query": {
+            "id": "callback-denied",
+            "data": f"approve:{pending}",
+            "from": {"id": 999, "first_name": "Bukan Admin"},
+            "message": {"message_id": 11, "chat": {"id": 999}, "text": "Pengajuan"},
+        }
+    }
+    response = client.post(
+        "/telegram/webhook",
+        json=payload,
+        headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
+    )
+    assert response.status_code == 200
+    with labkom.db() as c:
+        assert c.execute("SELECT status FROM loans WHERE id=?", (pending,)).fetchone()["status"] == "Menunggu"
+
+
+def test_healthz(client):
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "ok"
+
+
 def test_admin_can_approve_and_reject_booking(client):
     pending = insert_loan(status="Menunggu", tanggal="2099-01-02")
     login(client)

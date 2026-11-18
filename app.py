@@ -589,15 +589,18 @@ def telegram_configured():
     )
 
 
-def telegram_send(message, photo_fields=None):
+def telegram_send(message, photo_fields=None, reply_markup=None):
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         return False, "Telegram belum dikonfigurasi."
     try:
+        payload = {"chat_id": chat_id, "text": message}
+        if reply_markup:
+            payload["reply_markup"] = json.dumps(reply_markup)
         response = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": message},
+            data=payload,
             timeout=8,
         )
         response.raise_for_status()
@@ -660,7 +663,19 @@ def telegram_notify_request(loan):
         f"Jumlah murid: {loan['jumlah_murid']}\n"
         "Status: Menunggu persetujuan"
     )
-    return telegram_send(message, [(loan.get("photo_before") or "", "Foto kondisi awal")])
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "Setujui", "callback_data": f"approve:{loan['id']}"},
+                {"text": "Tolak", "callback_data": f"reject:{loan['id']}"},
+            ]
+        ]
+    }
+    return telegram_send(
+        message,
+        [(loan.get("photo_before") or "", "Foto kondisi awal")],
+        reply_markup=keyboard,
+    )
 
 
 def telegram_notify_decision(loan, decision):
@@ -671,6 +686,52 @@ def telegram_notify_decision(loan, decision):
         f"Tanggal: {loan['tanggal']}\nWaktu: {loan['waktu_mulai']} sampai {loan['waktu_selesai']}"
     )
     return telegram_send(message)
+
+
+def telegram_api(method, data):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return None
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/{method}",
+            data=data,
+            timeout=10,
+        )
+        return response.json()
+    except Exception as exc:
+        app.logger.warning("Telegram API gagal: %s", type(exc).__name__)
+        return None
+
+
+def telegram_answer_callback(callback_id, text, show_alert=False):
+    return telegram_api(
+        "answerCallbackQuery",
+        {
+            "callback_query_id": callback_id,
+            "text": text,
+            "show_alert": "true" if show_alert else "false",
+        },
+    )
+
+
+def telegram_edit_decision(chat_id, message_id, original_text, status):
+    lines = [
+        line
+        for line in str(original_text or "").splitlines()
+        if not line.startswith("Status:")
+    ]
+    text = "\n".join(lines).strip() or "Peminjaman Labkom"
+    text += f"\nStatus: {status}"
+    return telegram_api(
+        "editMessageText",
+        {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "reply_markup": json.dumps({"inline_keyboard": []}),
+        },
+    )
 
 
 def find_schedule_conflict(c, lab, tanggal, mulai, selesai, exclude_id=None):
@@ -747,9 +808,105 @@ def handle_too_large(error):
     return redirect(url_for("login"))
 
 
+@app.route("/healthz")
+def healthz():
+    try:
+        with db() as c:
+            c.execute("SELECT 1").fetchone()
+        return jsonify({"status": "ok"})
+    except Exception:
+        app.logger.exception("Health check gagal")
+        return jsonify({"status": "error"}), 500
+
+
+@app.route("/telegram/webhook", methods=["POST"])
+@csrf.exempt
+def telegram_webhook():
+    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+    if not secret or request.headers.get("X-Telegram-Bot-Api-Secret-Token") != secret:
+        abort(403)
+    update = request.get_json(silent=True) or {}
+    callback = update.get("callback_query")
+    if not callback:
+        return jsonify({"ok": True})
+
+    callback_id = callback.get("id", "")
+    data = callback.get("data", "")
+    message = callback.get("message", {})
+    chat_id = str(message.get("chat", {}).get("id", ""))
+    message_id = message.get("message_id")
+    sender_id = str(callback.get("from", {}).get("id", ""))
+    admin_chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not admin_chat or admin_chat not in {sender_id, chat_id}:
+        telegram_answer_callback(callback_id, "Tidak diizinkan.", show_alert=True)
+        return jsonify({"ok": True})
+
+    action, _, loan_id_raw = data.partition(":")
+    try:
+        loan_id = int(loan_id_raw)
+    except ValueError:
+        telegram_answer_callback(callback_id, "Data tombol tidak valid.", show_alert=True)
+        return jsonify({"ok": True})
+    if action not in {"approve", "reject"}:
+        telegram_answer_callback(callback_id, "Aksi tidak dikenal.", show_alert=True)
+        return jsonify({"ok": True})
+
+    with db(immediate=True) as c:
+        loan = c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone()
+        if not loan:
+            telegram_answer_callback(callback_id, "Pengajuan tidak ditemukan.", show_alert=True)
+            return jsonify({"ok": True})
+        if loan["status"] != "Menunggu":
+            telegram_answer_callback(callback_id, "Pengajuan sudah diproses.", show_alert=True)
+            return jsonify({"ok": True})
+        if action == "approve":
+            conflict = find_schedule_conflict(
+                c,
+                loan["lab"],
+                loan["tanggal"],
+                loan["waktu_mulai"],
+                loan["waktu_selesai"],
+                exclude_id=loan_id,
+            )
+            if conflict:
+                telegram_answer_callback(
+                    callback_id,
+                    f"Jadwal bentrok dengan {conflict['nama']} pukul "
+                    f"{conflict['waktu_mulai']} sampai {conflict['waktu_selesai']}.",
+                    show_alert=True,
+                )
+                return jsonify({"ok": True})
+            status = "Disetujui"
+        else:
+            status = "Ditolak"
+        actor = callback.get("from", {}).get("first_name", "Admin")
+        c.execute(
+            "UPDATE loans SET status=?, decision_by=?, decision_at=? WHERE id=?",
+            (
+                status,
+                f"{actor} via Telegram",
+                datetime.now(WIB).isoformat(timespec="seconds"),
+                loan_id,
+            ),
+        )
+        loan = dict(c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone())
+
+    app.logger.info(
+        "AUDIT Telegram %s loan=%s oleh=%s", status, loan_id, sender_id
+    )
+    telegram_answer_callback(callback_id, f"Peminjaman {status.lower()}.")
+    telegram_edit_decision(
+        chat_id,
+        message_id,
+        message.get("text", ""),
+        status,
+    )
+    return jsonify({"ok": True})
+
+
 @app.before_request
 def require_login():
-    public = {"login", "static"}
+    public = {"login", "static", "healthz", "telegram_webhook"}
     if request.endpoint in public:
         return None
     if "user_name" not in session:
