@@ -872,6 +872,110 @@ def test_telegram_completion_photos_are_sent_in_parallel(client, monkeypatch):
     assert len(set(threads)) == 2
 
 
+def test_telegram_outbox_enqueues_deduplicates_and_sends(client, monkeypatch):
+    with open(os.path.join(labkom.UPLOAD_DIR, "outbox.jpg"), "wb") as f:
+        f.write(b"foto")
+    loan_id = insert_loan(status="Menunggu", photo_before="outbox.jpg")
+    with labkom.db() as c:
+        loan = dict(c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone())
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    assert labkom.telegram_queue_request(loan) is True
+    assert labkom.telegram_queue_request(loan) is True
+
+    with labkom.db() as c:
+        rows = c.execute("SELECT * FROM telegram_outbox").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "pending"
+
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"ok": True, "result": {"message_id": 88}}
+
+    def fake_post(url, data=None, files=None, timeout=None):
+        calls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(labkom.requests, "post", fake_post)
+    result = labkom.telegram_process_outbox(limit=10)
+    assert result == {"claimed": 1, "sent": 1, "retried": 0, "failed": 0}
+    assert calls and calls[0].endswith("/sendPhoto")
+    with labkom.db() as c:
+        row = c.execute("SELECT * FROM telegram_outbox").fetchone()
+    assert row["status"] == "sent"
+    assert row["last_error"] == ""
+
+
+def test_telegram_outbox_retries_after_failure(client, monkeypatch):
+    with open(os.path.join(labkom.UPLOAD_DIR, "retry.jpg"), "wb") as f:
+        f.write(b"foto")
+    loan_id = insert_loan(status="Menunggu", photo_before="retry.jpg")
+    with labkom.db() as c:
+        loan = dict(c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone())
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    labkom.telegram_queue_request(loan)
+
+    def failing_post(*args, **kwargs):
+        raise labkom.requests.RequestException("offline")
+
+    monkeypatch.setattr(labkom.requests, "post", failing_post)
+    result = labkom.telegram_process_outbox(limit=10)
+    assert result["claimed"] == 1
+    assert result["retried"] == 1
+    with labkom.db() as c:
+        row = c.execute("SELECT * FROM telegram_outbox").fetchone()
+    assert row["status"] == "pending"
+    assert row["attempts"] == 1
+    assert row["next_attempt_at"]
+
+
+def test_telegram_outbox_worker_requires_secret(client, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "worker-secret")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    assert client.post("/telegram/outbox").status_code == 403
+    assert (
+        client.post(
+            "/telegram/outbox",
+            headers={"X-Labkom-Worker-Secret": "wrong"},
+        ).status_code
+        == 403
+    )
+    response = client.post(
+        "/telegram/outbox",
+        headers={"X-Labkom-Worker-Secret": "worker-secret"},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+    assert response.get_json()["claimed"] == 0
+
+
+def test_clear_removes_pending_outbox(client, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123")
+    loan_id = insert_loan(status="Menunggu")
+    with labkom.db() as c:
+        loan = dict(c.execute("SELECT * FROM loans WHERE id=?", (loan_id,)).fetchone())
+    labkom.telegram_queue_request(loan)
+    login(client)
+    response = client.post(
+        "/admin/clear-loans",
+        data={"confirmation": "BERSIHKAN"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with labkom.db() as c:
+        assert c.execute("SELECT COUNT(*) n FROM telegram_outbox").fetchone()["n"] == 0
+
+
 def test_students_json_import_is_robust(client, monkeypatch):
     students_path = os.path.join(os.path.dirname(labkom.DB_PATH), "students.json")
     monkeypatch.setattr(labkom, "STUDENTS_PATH", students_path)

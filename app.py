@@ -81,7 +81,10 @@ LOGIN_WINDOW = max(60, int(os.environ.get("LOGIN_WINDOW_SECONDS", "900")))
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 WIB = timezone(timedelta(hours=7), "WIB")
 LABKOM_LOCK_ID = 728199
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
+TELEGRAM_MAX_ATTEMPTS = 5
+TELEGRAM_CLAIM_SECONDS = 300
+TELEGRAM_BATCH_SIZE = 5
 
 if USE_POSTGRES:
     import psycopg
@@ -467,6 +470,24 @@ def _init_schema(c):
         data {blob_type} NOT NULL
     )"""
     )
+    c.execute(
+        f"""CREATE TABLE IF NOT EXISTS telegram_outbox (
+        id {id_column},
+        event_key TEXT NOT NULL UNIQUE,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT NOT NULL,
+        claimed_at TEXT DEFAULT '',
+        last_error TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        sent_at TEXT DEFAULT ''
+    )"""
+    )
+    c.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telegram_outbox_status_next "
+        "ON telegram_outbox(status, next_attempt_at)"
+    )
     # Index untuk pola query yang dipakai halaman utama dan pengecekan bentrok.
     c.execute(
         "CREATE INDEX IF NOT EXISTS idx_loans_lab_tanggal_status "
@@ -799,23 +820,54 @@ def telegram_send(message, photo_fields=None, reply_markup=None):
         return False, "Gagal mengirim Telegram. Periksa konfigurasi bot."
 
 
-def telegram_notify(loan):
-    message = (
+def telegram_completion_text(loan):
+    return (
         "Peminjaman Labkom selesai digunakan\n"
         f"Nama: {loan['nama']}\nJenis: {loan['peminjam_type']}\n"
         f"Tanggal: {loan['tanggal']}\nLab: {loan['lab']}\n"
         f"Waktu mulai: {loan['waktu_mulai']}\nEstimasi selesai: {loan['waktu_selesai']}\n"
         f"Selesai aktual: {(loan.get('returned_at') or '')[11:16] if loan.get('returned_at') else loan['waktu_selesai']}"
     )
+
+
+def telegram_request_text(loan):
+    return (
+        "Pengajuan peminjaman baru\n"
+        f"Nama: {loan['nama']}\nJenis: {loan['peminjam_type']}\n"
+        f"Kelas: {loan['kelas']}\nLab: {loan['lab']}\n"
+        f"Tanggal: {loan['tanggal']}\nWaktu: {loan['waktu_mulai']} sampai {loan['waktu_selesai']}\n"
+        f"Jumlah murid: {loan['jumlah_murid']}\n"
+        "Status: Menunggu persetujuan"
+    )
+
+
+def telegram_request_keyboard(loan):
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Setujui", "callback_data": f"approve:{loan['id']}"},
+                {"text": "Tolak", "callback_data": f"reject:{loan['id']}"},
+            ]
+        ]
+    }
+
+
+def telegram_decision_text(loan, decision):
+    return (
+        f"Peminjaman {decision}\n"
+        f"Nama: {loan['nama']}\nJenis: {loan['peminjam_type']}\n"
+        f"Kelas: {loan['kelas']}\nLab: {loan['lab']}\n"
+        f"Tanggal: {loan['tanggal']}\nWaktu: {loan['waktu_mulai']} sampai {loan['waktu_selesai']}"
+    )
+
+
+def telegram_send_text_and_photos(message, photo_fields):
     ok, status = telegram_send(message)
     if not ok:
         return False, status
 
     photos = []
-    for field, caption in (
-        (loan.get("photo_before") or "", "Foto kondisi awal"),
-        (loan.get("photo_after") or "", "Foto kondisi akhir"),
-    ):
+    for field, caption in photo_fields or []:
         photo = get_photo(field) if field else None
         if photo:
             data, content_type = photo
@@ -832,23 +884,19 @@ def telegram_notify(loan):
     return False, "Pesan terkirim, tetapi salah satu foto gagal dikirim."
 
 
-def telegram_notify_request(loan):
-    message = (
-        "Pengajuan peminjaman baru\n"
-        f"Nama: {loan['nama']}\nJenis: {loan['peminjam_type']}\n"
-        f"Kelas: {loan['kelas']}\nLab: {loan['lab']}\n"
-        f"Tanggal: {loan['tanggal']}\nWaktu: {loan['waktu_mulai']} sampai {loan['waktu_selesai']}\n"
-        f"Jumlah murid: {loan['jumlah_murid']}\n"
-        "Status: Menunggu persetujuan"
+def telegram_notify(loan):
+    return telegram_send_text_and_photos(
+        telegram_completion_text(loan),
+        [
+            (loan.get("photo_before") or "", "Foto kondisi awal"),
+            (loan.get("photo_after") or "", "Foto kondisi akhir"),
+        ],
     )
-    keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "Setujui", "callback_data": f"approve:{loan['id']}"},
-                {"text": "Tolak", "callback_data": f"reject:{loan['id']}"},
-            ]
-        ]
-    }
+
+
+def telegram_notify_request(loan):
+    message = telegram_request_text(loan)
+    keyboard = telegram_request_keyboard(loan)
     photo = get_photo(loan.get("photo_before") or "")
     if photo:
         data, content_type = photo
@@ -862,13 +910,188 @@ def telegram_notify_request(loan):
 
 
 def telegram_notify_decision(loan, decision):
-    message = (
-        f"Peminjaman {decision}\n"
-        f"Nama: {loan['nama']}\nJenis: {loan['peminjam_type']}\n"
-        f"Kelas: {loan['kelas']}\nLab: {loan['lab']}\n"
-        f"Tanggal: {loan['tanggal']}\nWaktu: {loan['waktu_mulai']} sampai {loan['waktu_selesai']}"
+    return telegram_send(telegram_decision_text(loan, decision))
+
+
+def telegram_enqueue(event_key, payload):
+    if not telegram_configured():
+        return False
+    now = datetime.now(WIB).isoformat(timespec="seconds")
+    try:
+        with db(immediate=True) as c:
+            c.execute(
+                """INSERT INTO telegram_outbox(
+                   event_key,payload,status,attempts,next_attempt_at,created_at
+                   ) VALUES(?,?,'pending',0,?,?)
+                   ON CONFLICT (event_key) DO NOTHING""",
+                (event_key, json.dumps(payload, ensure_ascii=False), now, now),
+            )
+        return True
+    except Exception:
+        app.logger.exception("Gagal memasukkan notifikasi ke outbox Telegram")
+        return False
+
+
+def telegram_queue_request(loan):
+    return telegram_enqueue(
+        f"request:{loan['id']}",
+        {
+            "mode": "request",
+            "text": telegram_request_text(loan),
+            "photo": loan.get("photo_before") or "",
+            "reply_markup": telegram_request_keyboard(loan),
+        },
     )
-    return telegram_send(message)
+
+
+def telegram_queue_completion(loan):
+    photos = [
+        [field, caption]
+        for field, caption in (
+            (loan.get("photo_before") or "", "Foto kondisi awal"),
+            (loan.get("photo_after") or "", "Foto kondisi akhir"),
+        )
+        if field
+    ]
+    return telegram_enqueue(
+        f"completion:{loan['id']}",
+        {
+            "mode": "completion",
+            "text": telegram_completion_text(loan),
+            "photos": photos,
+        },
+    )
+
+
+def telegram_queue_decision(loan, decision):
+    return telegram_enqueue(
+        f"decision:{loan['id']}:{decision}",
+        {"mode": "text", "text": telegram_decision_text(loan, decision)},
+    )
+
+
+def telegram_deliver(payload):
+    mode = payload.get("mode")
+    text = payload.get("text", "")
+    if mode == "request":
+        filename = payload.get("photo") or ""
+        if filename:
+            photo = get_photo(filename)
+            if photo:
+                data, content_type = photo
+                ok, _ = telegram_send_photo(
+                    filename,
+                    data,
+                    content_type,
+                    text,
+                    payload.get("reply_markup"),
+                )
+                if ok:
+                    return True, "Notifikasi Telegram terkirim."
+        return telegram_send(text, reply_markup=payload.get("reply_markup"))
+    if mode == "completion":
+        return telegram_send_text_and_photos(
+            text, [tuple(item) for item in payload.get("photos", [])]
+        )
+    return telegram_send(text)
+
+
+def telegram_process_outbox(limit=TELEGRAM_BATCH_SIZE):
+    now = datetime.now(WIB)
+    now_text = now.isoformat(timespec="seconds")
+    stale_text = (now - timedelta(seconds=TELEGRAM_CLAIM_SECONDS)).isoformat(
+        timespec="seconds"
+    )
+    limit = max(1, min(int(limit), 50))
+    claimed = []
+
+    with db(immediate=True) as c:
+        c.execute(
+            "UPDATE telegram_outbox SET status='pending', next_attempt_at=? "
+            "WHERE status='sending' AND claimed_at<?",
+            (now_text, stale_text),
+        )
+        rows = c.execute(
+            "SELECT * FROM telegram_outbox WHERE status='pending' "
+            "AND next_attempt_at<=? ORDER BY id LIMIT ?",
+            (now_text, limit),
+        ).fetchall()
+        for row in rows:
+            item = dict(row)
+            c.execute(
+                "UPDATE telegram_outbox SET status='sending', claimed_at=?, "
+                "attempts=attempts+1 WHERE id=? AND status='pending'",
+                (now_text, item["id"]),
+            )
+            item["attempts"] = int(item.get("attempts") or 0) + 1
+            claimed.append(item)
+
+    sent = retried = failed = 0
+    for row in claimed:
+        try:
+            payload = json.loads(row["payload"])
+            ok, message = telegram_deliver(payload)
+        except Exception as exc:
+            app.logger.warning("Outbox Telegram gagal: %s", type(exc).__name__)
+            ok, message = False, "Gagal memproses outbox Telegram."
+
+        attempts = int(row["attempts"])
+        partial = str(message).startswith("Pesan terkirim, tetapi")
+        with db() as c:
+            if ok or partial:
+                # Jangan ulangi pesan yang sudah terkirim hanya karena salah
+                # satu foto gagal; akibatnya admin akan menerima duplikat.
+                c.execute(
+                    "UPDATE telegram_outbox SET status='sent', sent_at=?, "
+                    "claimed_at='', last_error=? WHERE id=?",
+                    (now_text, "" if ok else str(message)[:500], row["id"]),
+                )
+                sent += 1
+            elif attempts >= TELEGRAM_MAX_ATTEMPTS:
+                c.execute(
+                    "UPDATE telegram_outbox SET status='failed', claimed_at='', "
+                    "last_error=?, next_attempt_at=? WHERE id=?",
+                    (str(message)[:500], now_text, row["id"]),
+                )
+                failed += 1
+            else:
+                delay = min(3600, 30 * (2 ** min(attempts - 1, 6)))
+                next_text = (now + timedelta(seconds=delay)).isoformat(
+                    timespec="seconds"
+                )
+                c.execute(
+                    "UPDATE telegram_outbox SET status='pending', claimed_at='', "
+                    "last_error=?, next_attempt_at=? WHERE id=?",
+                    (str(message)[:500], next_text, row["id"]),
+                )
+                retried += 1
+
+    cutoff = (now - timedelta(days=7)).isoformat(timespec="seconds")
+    with db() as c:
+        c.execute(
+            "DELETE FROM telegram_outbox WHERE status='sent' AND sent_at<?",
+            (cutoff,),
+        )
+
+    return {
+        "claimed": len(claimed),
+        "sent": sent,
+        "retried": retried,
+        "failed": failed,
+    }
+
+
+def telegram_kick_worker():
+    if not telegram_configured():
+        return
+
+    def run():
+        try:
+            telegram_process_outbox(limit=3)
+        except Exception:
+            app.logger.exception("Worker outbox Telegram gagal")
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def telegram_api(method, data):
@@ -1002,6 +1225,21 @@ def healthz():
         return jsonify({"status": "error"}), 500
 
 
+@app.route("/telegram/outbox", methods=["POST"])
+@csrf.exempt
+def telegram_outbox_worker():
+    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+    supplied = request.headers.get("X-Labkom-Worker-Secret", "")
+    if not secret or not hmac.compare_digest(
+        supplied.encode("utf-8"), secret.encode("utf-8")
+    ):
+        abort(403)
+    if not telegram_configured():
+        return jsonify({"ok": False, "error": "Telegram belum dikonfigurasi."}), 503
+    result = telegram_process_outbox()
+    return jsonify({"ok": True, **result})
+
+
 @app.route("/telegram/webhook", methods=["POST"])
 @csrf.exempt
 def telegram_webhook():
@@ -1092,7 +1330,7 @@ def telegram_webhook():
 
 @app.before_request
 def require_login():
-    public = {"login", "static", "healthz", "telegram_webhook"}
+    public = {"login", "static", "healthz", "telegram_webhook", "telegram_outbox_worker"}
     if request.endpoint in public or request.path == "/telegram/webhook":
         return None
     if "user_name" not in session:
@@ -1345,7 +1583,10 @@ def approve_loan(loan_id):
         "AUDIT setujui loan=%s oleh=%s", loan_id, session.get("user_name", "-")
     )
     if telegram_configured():
-        telegram_notify_decision(loan, "disetujui")
+        if telegram_queue_decision(loan, "disetujui"):
+            telegram_kick_worker()
+        else:
+            app.logger.warning("Gagal menjadwalkan notifikasi persetujuan Telegram")
     flash("Pengajuan peminjaman disetujui.", "success")
     return redirect_section("admin")
 
@@ -1371,7 +1612,10 @@ def reject_loan(loan_id):
         "AUDIT tolak loan=%s oleh=%s", loan_id, session.get("user_name", "-")
     )
     if telegram_configured():
-        telegram_notify_decision(loan, "ditolak")
+        if telegram_queue_decision(loan, "ditolak"):
+            telegram_kick_worker()
+        else:
+            app.logger.warning("Gagal menjadwalkan notifikasi penolakan Telegram")
     flash("Pengajuan peminjaman ditolak.", "success")
     return redirect_section("admin")
 
@@ -1739,11 +1983,12 @@ def borrow_teacher():
         ).fetchone()
     loan = dict(loan_row)
     if telegram_configured():
-        ok, _ = telegram_notify_request(loan)
-        if not ok:
+        if telegram_queue_request(loan):
+            telegram_kick_worker()
+        else:
             flash(
                 "Pengajuan dikirim dan menunggu persetujuan admin. "
-                "Notifikasi Telegram gagal dikirim.",
+                "Notifikasi Telegram gagal dijadwalkan.",
                 "warning",
             )
             return redirect_section("guru")
@@ -1817,11 +2062,17 @@ def return_loan(loan_id):
         "AUDIT selesai loan=%s oleh=%s", loan_id, session.get("user_name", "-")
     )
     if telegram_configured():
-        ok, _ = telegram_notify(loan)
-        if ok:
-            flash("Peminjaman ditandai selesai. Notifikasi Telegram terkirim.", "success")
+        if telegram_queue_completion(loan):
+            telegram_kick_worker()
+            flash(
+                "Peminjaman ditandai selesai. Notifikasi Telegram dijadwalkan.",
+                "success",
+            )
         else:
-            flash("Peminjaman ditandai selesai. Notifikasi Telegram gagal.", "warning")
+            flash(
+                "Peminjaman ditandai selesai. Notifikasi Telegram gagal dijadwalkan.",
+                "warning",
+            )
     else:
         flash(
             "Peminjaman ditandai selesai. Telegram belum dikonfigurasi.",
@@ -1955,6 +2206,7 @@ def clear_all_loans():
     try:
         with db() as c:
             c.execute("DELETE FROM loan_classes")
+            c.execute("DELETE FROM telegram_outbox")
             c.execute("DELETE FROM loans")
             if USE_POSTGRES:
                 c.execute("DELETE FROM photos")

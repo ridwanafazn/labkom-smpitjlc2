@@ -98,6 +98,8 @@ requests.post(
 
 Ganti TOKEN, domain, dan SECRET sesuai environment. Setelah webhook aktif, admin dapat menyetujui atau menolak pengajuan langsung dari Telegram.
 
+Notifikasi keluar memakai outbox di database. Worker langsung dicoba di background, lalu cron GitHub Actions memproses sisa antrean setiap lima menit. Pesan yang gagal dicoba ulang dengan jeda bertahap hingga lima kali. Untuk cron, simpan nilai `TELEGRAM_WEBHOOK_SECRET` sebagai GitHub Actions secret `LABKOM_WORKER_SECRET`.
+
 ## Optimasi performa
 
 - Pustaka QR hanya dimuat saat halaman scanner dibuka.
@@ -105,7 +107,8 @@ Ganti TOKEN, domain, dan SECRET sesuai environment. Setelah webhook aktif, admin
 - Foto memakai cache privat satu tahun karena nama file selalu unik.
 - Pengajuan mengirim pesan dan foto dalam satu panggilan Telegram.
 - Foto penyelesaian dikirim paralel, bukan berurutan.
-- Workflow GitHub Actions memanggil `/healthz` selama jam sekolah untuk mengurangi cold start.
+- Notifikasi Telegram masuk ke outbox dan diproses di background, sehingga response tidak menunggu Telegram.
+- Workflow GitHub Actions memanggil `/healthz` dan worker outbox selama jam sekolah untuk mengurangi cold start.
 - Satu koneksi database dipakai ulang selama satu request.
 - Schema version membuat migrasi dan backfill tidak dijalankan ulang setiap cold start.
 - Query dashboard, jadwal, guru, dan statistik sudah digabung dan memakai index yang sesuai.

@@ -14,3 +14,13 @@ jobs:
     steps:
       - name: Ping health check
         run: curl --fail --silent --show-error --max-time 20 https://labkom-smpitjlc2.vercel.app/healthz
+      - name: Process Telegram outbox
+        env:
+          WORKER_SECRET: ${{ secrets.LABKOM_WORKER_SECRET }}
+        run: |
+          if [ -n "$WORKER_SECRET" ]; then
+            curl --fail --silent --show-error --max-time 30 \
+              -X POST \
+              -H "X-Labkom-Worker-Secret: $WORKER_SECRET" \
+              https://labkom-smpitjlc2.vercel.app/telegram/outbox
+          fi
