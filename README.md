@@ -27,7 +27,8 @@ Semua konfigurasi dibaca dari environment atau file `.env`.
 | `FLASK_SECRET_KEY` | Wajib. Kunci session. Aplikasi menolak start jika kosong. |
 | `DATABASE_URL` | Koneksi PostgreSQL atau Neon. Kosong berarti SQLite lokal. |
 | `ADMIN_NAME`, `ADMIN_PASSWORD` | Akun admin. Hash password diperbarui saat startup. |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Notifikasi Telegram. Opsional. Dikirim di background. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Notifikasi Telegram dan tombol persetujuan. |
+| `TELEGRAM_WEBHOOK_SECRET` | Secret untuk webhook tombol Telegram. |
 | `HOST`, `PORT`, `THREADS` | Alamat dan jumlah thread Waitress. |
 | `BEHIND_PROXY` | Set `1` jika di belakang Caddy atau Nginx. |
 | `COOKIE_SECURE` | Set `1` jika sudah memakai HTTPS. |
@@ -74,6 +75,25 @@ TELEGRAM_CHAT_ID
 ```
 
 `vercel.json` mengarahkan function ke region `sin1`. File `.python-version` memakai Python 3.14.
+
+## Persetujuan lewat Telegram
+
+Notifikasi pengajuan memiliki tombol Setujui dan Tolak. Agar tombol bekerja, daftarkan webhook:
+
+```python
+import requests
+
+requests.post(
+    "https://api.telegram.org/botTOKEN/setWebhook",
+    data={
+        "url": "https://domain-anda/telegram/webhook",
+        "secret_token": "SECRET",
+        "allowed_updates": '["callback_query"]',
+    },
+)
+```
+
+Ganti TOKEN, domain, dan SECRET sesuai environment. Setelah webhook aktif, admin dapat menyetujui atau menolak pengajuan langsung dari Telegram.
 
 ## Test
 
